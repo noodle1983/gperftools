@@ -281,6 +281,7 @@ static void MaybeDumpProfileLocked() {
 // Record an allocation in the profile.
 static void NewHook(const void* ptr, size_t bytes) {
   if (!ptr) return;
+  if (dumping) return;
 
   // Take the stack trace outside the critical section.
   static constexpr int kDepth = 32;
@@ -296,6 +297,7 @@ static void NewHook(const void* ptr, size_t bytes) {
 // Record a deallocation in the profile.
 static void DeleteHook(const void* ptr) {
   if (!ptr) return;
+  if (dumping) return;
 
   SpinLockHolder l(&heap_lock);
   if (is_on) {
