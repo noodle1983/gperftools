@@ -68,6 +68,7 @@
 #include "base/sysinfo.h"      // for GetUniquePathFromEnv()
 #include "heap-profile-table.h"
 #include "malloc_backtrace.h"
+#include "base/pre_created_file.h"
 
 #ifndef	PATH_MAX
 #ifdef MAXPATHLEN
@@ -121,6 +122,9 @@ DEFINE_int64(heap_profile_time_interval,
 // So we use a simple spinlock.
 static SpinLock heap_lock;
 
+
+static PreCreateFile pre_create_file;
+
 //----------------------------------------------------------------------
 // Simple allocator for heap profiler's internal memory
 //----------------------------------------------------------------------
@@ -170,6 +174,7 @@ extern "C" char* GetHeapProfile() {
   tcmalloc::ChunkedWriterConfig config(ProfilerMalloc, ProfilerFree);
 
   return tcmalloc::WithWriterToStrDup(config, [] (tcmalloc::GenericWriter* writer) {
+    pre_create_file.CheckPrepare();
     SpinLockHolder l(&heap_lock);
     DoDumpHeapProfileLocked(writer);
   });
@@ -178,6 +183,18 @@ extern "C" char* GetHeapProfile() {
 // defined below
 static void NewHook(const void* ptr, size_t size);
 static void DeleteHook(const void* ptr);
+
+static const char* MakeFileName()
+{
+  if (filename_prefix == nullptr) return "";  // we do not yet need dumping
+
+  // Make file name
+  static char file_name[1000] = { 0 };
+  dump_count++;
+  snprintf(file_name, sizeof(file_name), "%s.%04d%s",
+           filename_prefix, dump_count, HeapProfileTable::kFileExt);
+  return file_name;
+}
 
 // Helper for HeapProfilerDump.
 static void DumpProfileLocked(const char* reason) {
@@ -190,16 +207,14 @@ static void DumpProfileLocked(const char* reason) {
   dumping = true;
 
   // Make file name
-  char file_name[1000];
-  dump_count++;
-  snprintf(file_name, sizeof(file_name), "%s.%04d%s",
-           filename_prefix, dump_count, HeapProfileTable::kFileExt);
+  const char* file_name = MakeFileName();
 
   // Dump the profile
   RAW_VLOG(0, "Dumping heap profile to %s (%s)", file_name, reason);
   // We must use file routines that don't access memory, since we hold
   // a memory lock now.
-  RawFD fd = RawOpenForWriting(file_name);
+  //RawFD fd = RawOpenForWriting(file_name);
+  RawFD fd = pre_create_file.GetCurrentFd(file_name);
   if (fd == kIllegalRawFD) {
     RAW_LOG(ERROR, "Failed dumping heap profile to %s. Numeric errno is %d", file_name, errno);
     dumping = false;
@@ -227,6 +242,7 @@ static void DumpProfileLocked(const char* reason) {
 // Dump a profile after either an allocation or deallocation, if
 // the memory use has changed enough since the last dump.
 static void MaybeDumpProfileLocked() {
+  if (!pre_create_file.Prepared()) { return; }
   if (!dumping) {
     const HeapProfileTable::Stats& total = heap_profile->total();
     const int64_t inuse_bytes = total.alloc_size - total.free_size;
@@ -281,12 +297,12 @@ static void MaybeDumpProfileLocked() {
 // Record an allocation in the profile.
 static void NewHook(const void* ptr, size_t bytes) {
   if (!ptr) return;
-  if (dumping) return;
 
   // Take the stack trace outside the critical section.
   static constexpr int kDepth = 32;
   void* stack[kDepth];
   int depth = tcmalloc::GrabBacktrace(stack, kDepth, 1);
+  pre_create_file.CheckPrepare();
   SpinLockHolder l(&heap_lock);
   if (is_on) {
     heap_profile->RecordAlloc(ptr, bytes, depth, stack);
@@ -297,8 +313,8 @@ static void NewHook(const void* ptr, size_t bytes) {
 // Record a deallocation in the profile.
 static void DeleteHook(const void* ptr) {
   if (!ptr) return;
-  if (dumping) return;
 
+  pre_create_file.CheckPrepare();
   SpinLockHolder l(&heap_lock);
   if (is_on) {
     heap_profile->RecordFree(ptr);
@@ -353,6 +369,10 @@ extern "C" void HeapProfilerStart(const char* prefix) {
   filename_prefix = reinterpret_cast<char*>(ProfilerMalloc(prefix_length + 1));
   memcpy(filename_prefix, prefix, prefix_length);
   filename_prefix[prefix_length] = '\0';
+
+  RawFD fd = pre_create_file.GetCurrentFd(MakeFileName());
+  if (fd != kIllegalRawFD) { RawClose(fd); }
+
 }
 
 extern "C" int IsHeapProfilerRunning() {
@@ -364,6 +384,8 @@ extern "C" void HeapProfilerStop() {
   SpinLockHolder l(&heap_lock);
 
   if (!is_on) return;
+
+  pre_create_file.Close();
 
   // Unset our new/delete hooks, checking they were set:
   RAW_CHECK(MallocHook::RemoveNewHook(&NewHook), "");
@@ -396,6 +418,7 @@ extern "C" void HeapProfilerDump(const char *reason) {
 // number is defined in the environment variable HEAPPROFILESIGNAL.
 static void HeapProfilerDumpSignal(int signal_number) {
   (void)signal_number;
+  pre_create_file.CheckPrepare();
   if (!heap_lock.TryLock()) {
     return;
   }
