@@ -162,28 +162,6 @@ static HeapProfileTable* heap_profile;  // the heap profile table
 // Profile generation
 //----------------------------------------------------------------------
 
-// Input must be a buffer of size at least 1MB.
-static void DoDumpHeapProfileLocked(tcmalloc::GenericWriter* writer) {
-  RAW_DCHECK(heap_lock.IsHeld(), "");
-  if (is_on) {
-    heap_profile->SaveProfile(writer);
-  }
-}
-
-extern "C" char* GetHeapProfile() {
-  tcmalloc::ChunkedWriterConfig config(ProfilerMalloc, ProfilerFree);
-
-  return tcmalloc::WithWriterToStrDup(config, [] (tcmalloc::GenericWriter* writer) {
-    pre_create_file.CheckPrepare();
-    SpinLockHolder l(&heap_lock);
-    DoDumpHeapProfileLocked(writer);
-  });
-}
-
-// defined below
-static void NewHook(const void* ptr, size_t size);
-static void DeleteHook(const void* ptr);
-
 static const char* MakeFileName()
 {
   if (filename_prefix == nullptr) return "";  // we do not yet need dumping
@@ -196,6 +174,28 @@ static const char* MakeFileName()
   return file_name;
 }
 
+// Input must be a buffer of size at least 1MB.
+static void DoDumpHeapProfileLocked(tcmalloc::GenericWriter* writer) {
+  RAW_DCHECK(heap_lock.IsHeld(), "");
+  if (is_on) {
+    heap_profile->SaveProfile(writer);
+  }
+}
+
+extern "C" char* GetHeapProfile() {
+  tcmalloc::ChunkedWriterConfig config(ProfilerMalloc, ProfilerFree);
+
+  return tcmalloc::WithWriterToStrDup(config, [] (tcmalloc::GenericWriter* writer) {
+    pre_create_file.CheckPrepare(MakeFileName);
+    SpinLockHolder l(&heap_lock);
+    DoDumpHeapProfileLocked(writer);
+  });
+}
+
+// defined below
+static void NewHook(const void* ptr, size_t size);
+static void DeleteHook(const void* ptr);
+
 // Helper for HeapProfilerDump.
 static void DumpProfileLocked(const char* reason) {
   RAW_DCHECK(heap_lock.IsHeld(), "");
@@ -207,14 +207,14 @@ static void DumpProfileLocked(const char* reason) {
   dumping = true;
 
   // Make file name
-  const char* file_name = MakeFileName();
+  const char* file_name = pre_create_file.GetCurrentFilename();
 
   // Dump the profile
   RAW_VLOG(0, "Dumping heap profile to %s (%s)", file_name, reason);
   // We must use file routines that don't access memory, since we hold
   // a memory lock now.
   //RawFD fd = RawOpenForWriting(file_name);
-  RawFD fd = pre_create_file.GetCurrentFd(file_name);
+  RawFD fd = pre_create_file.GetCurrentFd();
   if (fd == kIllegalRawFD) {
     RAW_LOG(ERROR, "Failed dumping heap profile to %s. Numeric errno is %d", file_name, errno);
     dumping = false;
@@ -302,7 +302,7 @@ static void NewHook(const void* ptr, size_t bytes) {
   static constexpr int kDepth = 32;
   void* stack[kDepth];
   int depth = tcmalloc::GrabBacktrace(stack, kDepth, 1);
-  pre_create_file.CheckPrepare();
+  pre_create_file.CheckPrepare(MakeFileName);
   SpinLockHolder l(&heap_lock);
   if (is_on) {
     heap_profile->RecordAlloc(ptr, bytes, depth, stack);
@@ -314,7 +314,7 @@ static void NewHook(const void* ptr, size_t bytes) {
 static void DeleteHook(const void* ptr) {
   if (!ptr) return;
 
-  pre_create_file.CheckPrepare();
+  pre_create_file.CheckPrepare(MakeFileName);
   SpinLockHolder l(&heap_lock);
   if (is_on) {
     heap_profile->RecordFree(ptr);
@@ -369,10 +369,6 @@ extern "C" void HeapProfilerStart(const char* prefix) {
   filename_prefix = reinterpret_cast<char*>(ProfilerMalloc(prefix_length + 1));
   memcpy(filename_prefix, prefix, prefix_length);
   filename_prefix[prefix_length] = '\0';
-
-  RawFD fd = pre_create_file.GetCurrentFd(MakeFileName());
-  if (fd != kIllegalRawFD) { RawClose(fd); }
-
 }
 
 extern "C" int IsHeapProfilerRunning() {
@@ -418,7 +414,7 @@ extern "C" void HeapProfilerDump(const char *reason) {
 // number is defined in the environment variable HEAPPROFILESIGNAL.
 static void HeapProfilerDumpSignal(int signal_number) {
   (void)signal_number;
-  pre_create_file.CheckPrepare();
+  pre_create_file.CheckPrepare(MakeFileName);
   if (!heap_lock.TryLock()) {
     return;
   }

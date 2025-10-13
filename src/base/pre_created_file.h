@@ -3,9 +3,9 @@
 
 #include "logging.h"
 #include "spinlock.h"
-
 class PreCreateFile {
 public:
+	typedef const char* (*MakeFileNameFunc)();
 	PreCreateFile()
 		:fd_(kIllegalRawFD), filename_{0}
 	{
@@ -23,12 +23,16 @@ public:
 		return fd_ != kIllegalRawFD;
 	}
 
-	inline void CheckPrepare()
+	inline void CheckPrepare(MakeFileNameFunc make_filename)
 	{
 		if (fd_ != kIllegalRawFD) { return; }
-		if (strlen(filename_) == 0) { return; }
 		if (lock_.TryLock()) {
-			if ((fd_ == kIllegalRawFD) && (strlen(filename_) > 0)) {
+			if (fd_ == kIllegalRawFD) {
+				const char* filename = make_filename();
+				size_t namelen = strlen(filename);
+				if (namelen == 0 || namelen >= sizeof(filename_)) { return; }
+				strcpy(filename_, filename);
+
 				fd_ = RawOpenForWriting(filename_);
 			}
 			lock_.Unlock();
@@ -36,9 +40,8 @@ public:
 	}
 
 	// not response for the close of the raw fd!!!
-	inline RawFD GetCurrentFd(const char* nextfilename) {
+	inline RawFD GetCurrentFd() {
 		if (lock_.TryLock()) {
-			snprintf(filename_, sizeof(filename_) - 1, "%s", nextfilename);
 			RawFD ret = fd_;
 
 			fd_ = kIllegalRawFD;
@@ -46,6 +49,10 @@ public:
 			return ret;
 		}
 		return kIllegalRawFD;
+	}
+
+	inline const char* GetCurrentFilename() {
+		return filename_;
 	}
 
 	inline void Close()
@@ -62,7 +69,7 @@ public:
 private:
 	volatile RawFD fd_;
 	SpinLock lock_;
-	char filename_[256];
+	char filename_[1024];
 };
 
 #endif
