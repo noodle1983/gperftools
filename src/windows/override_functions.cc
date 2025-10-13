@@ -99,7 +99,7 @@ size_t _msize(void* p) {
   return MallocExtension::instance()->GetAllocatedSize(p);
 }
 
-size_t _msize_base(void* p) noexcept {
+size_t _msize_base(void* p) {
   return MallocExtension::instance()->GetAllocatedSize(p);
 }
 

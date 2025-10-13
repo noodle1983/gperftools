@@ -262,6 +262,7 @@ void HeapProfileTable::SaveProfile(tcmalloc::GenericWriter* writer) const {
   for (int i = 0; i < kHashTableSize; i++) {
     for (Bucket* curr = bucket_table_[i]; curr != nullptr; curr = curr->next) {
       UnparseBucket(*curr, writer, "");
+	  writer->AppendF("%d %d %p\n", i, curr->depth, curr->hash);
       bucket_count++;
     }
   }

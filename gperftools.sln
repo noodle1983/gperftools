@@ -1,6 +1,6 @@
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio 14
-VisualStudioVersion = 14.0.25420.1
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36511.14 d17.14
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "libtcmalloc_minimal", "vsprojects\libtcmalloc_minimal\libtcmalloc_minimal.vcxproj", "{55E2B3AE-3CA1-4DB6-97F7-0A044D6F446F}"
 EndProject
@@ -262,30 +262,6 @@ Global
 		{5765198D-5305-4AB0-9A21-A0CD8201EB2A}.Release-Override|x86.ActiveCfg = Release-Override|Win32
 		{5765198D-5305-4AB0-9A21-A0CD8201EB2A}.Release-Patch|x64.ActiveCfg = Release-Patch|x64
 		{5765198D-5305-4AB0-9A21-A0CD8201EB2A}.Release-Patch|x86.ActiveCfg = Release-Patch|Win32
-		{81CA712E-90B8-4AE5-9E89-5B436578D6DA}.Debug|x64.ActiveCfg = Debug|x64
-		{81CA712E-90B8-4AE5-9E89-5B436578D6DA}.Debug|x64.Build.0 = Debug|x64
-		{81CA712E-90B8-4AE5-9E89-5B436578D6DA}.Debug|x86.ActiveCfg = Debug|Win32
-		{81CA712E-90B8-4AE5-9E89-5B436578D6DA}.Debug|x86.Build.0 = Debug|Win32
-		{81CA712E-90B8-4AE5-9E89-5B436578D6DA}.Release-Override|x64.ActiveCfg = Release-Override|x64
-		{81CA712E-90B8-4AE5-9E89-5B436578D6DA}.Release-Override|x64.Build.0 = Release-Override|x64
-		{81CA712E-90B8-4AE5-9E89-5B436578D6DA}.Release-Override|x86.ActiveCfg = Release-Override|Win32
-		{81CA712E-90B8-4AE5-9E89-5B436578D6DA}.Release-Override|x86.Build.0 = Release-Override|Win32
-		{81CA712E-90B8-4AE5-9E89-5B436578D6DA}.Release-Patch|x64.ActiveCfg = Release-Patch|x64
-		{81CA712E-90B8-4AE5-9E89-5B436578D6DA}.Release-Patch|x64.Build.0 = Release-Patch|x64
-		{81CA712E-90B8-4AE5-9E89-5B436578D6DA}.Release-Patch|x86.ActiveCfg = Release-Patch|Win32
-		{81CA712E-90B8-4AE5-9E89-5B436578D6DA}.Release-Patch|x86.Build.0 = Release-Patch|Win32
-		{3A559C75-FD26-4300-B86B-165FD43EE1CE}.Debug|x64.ActiveCfg = Debug|x64
-		{3A559C75-FD26-4300-B86B-165FD43EE1CE}.Debug|x64.Build.0 = Debug|x64
-		{3A559C75-FD26-4300-B86B-165FD43EE1CE}.Debug|x86.ActiveCfg = Debug|Win32
-		{3A559C75-FD26-4300-B86B-165FD43EE1CE}.Debug|x86.Build.0 = Debug|Win32
-		{3A559C75-FD26-4300-B86B-165FD43EE1CE}.Release-Override|x64.ActiveCfg = Release-Override|x64
-		{3A559C75-FD26-4300-B86B-165FD43EE1CE}.Release-Override|x64.Build.0 = Release-Override|x64
-		{3A559C75-FD26-4300-B86B-165FD43EE1CE}.Release-Override|x86.ActiveCfg = Release-Override|Win32
-		{3A559C75-FD26-4300-B86B-165FD43EE1CE}.Release-Override|x86.Build.0 = Release-Override|Win32
-		{3A559C75-FD26-4300-B86B-165FD43EE1CE}.Release-Patch|x64.ActiveCfg = Release-Patch|x64
-		{3A559C75-FD26-4300-B86B-165FD43EE1CE}.Release-Patch|x64.Build.0 = Release-Patch|x64
-		{3A559C75-FD26-4300-B86B-165FD43EE1CE}.Release-Patch|x86.ActiveCfg = Release-Patch|Win32
-		{3A559C75-FD26-4300-B86B-165FD43EE1CE}.Release-Patch|x86.Build.0 = Release-Patch|Win32
 		{387F753A-0312-4A7B-A1D6-B2795E832E96}.Debug|x64.ActiveCfg = Debug|x64
 		{387F753A-0312-4A7B-A1D6-B2795E832E96}.Debug|x64.Build.0 = Debug|x64
 		{387F753A-0312-4A7B-A1D6-B2795E832E96}.Debug|x86.ActiveCfg = Debug|Win32
@@ -298,6 +274,18 @@ Global
 		{387F753A-0312-4A7B-A1D6-B2795E832E96}.Release-Patch|x64.Build.0 = Release-Patch|x64
 		{387F753A-0312-4A7B-A1D6-B2795E832E96}.Release-Patch|x86.ActiveCfg = Release-Patch|Win32
 		{387F753A-0312-4A7B-A1D6-B2795E832E96}.Release-Patch|x86.Build.0 = Release-Patch|Win32
+		{0496DF42-D7AD-46B6-B10C-C57A07E89B0D}.Debug|x64.ActiveCfg = Debug|x64
+		{0496DF42-D7AD-46B6-B10C-C57A07E89B0D}.Debug|x64.Build.0 = Debug|x64
+		{0496DF42-D7AD-46B6-B10C-C57A07E89B0D}.Debug|x86.ActiveCfg = Debug|Win32
+		{0496DF42-D7AD-46B6-B10C-C57A07E89B0D}.Debug|x86.Build.0 = Debug|Win32
+		{0496DF42-D7AD-46B6-B10C-C57A07E89B0D}.Release-Override|x64.ActiveCfg = Release-Override|x64
+		{0496DF42-D7AD-46B6-B10C-C57A07E89B0D}.Release-Override|x64.Build.0 = Release-Override|x64
+		{0496DF42-D7AD-46B6-B10C-C57A07E89B0D}.Release-Override|x86.ActiveCfg = Release-Override|Win32
+		{0496DF42-D7AD-46B6-B10C-C57A07E89B0D}.Release-Override|x86.Build.0 = Release-Override|Win32
+		{0496DF42-D7AD-46B6-B10C-C57A07E89B0D}.Release-Patch|x64.ActiveCfg = Release-Patch|x64
+		{0496DF42-D7AD-46B6-B10C-C57A07E89B0D}.Release-Patch|x64.Build.0 = Release-Patch|x64
+		{0496DF42-D7AD-46B6-B10C-C57A07E89B0D}.Release-Patch|x86.ActiveCfg = Release-Patch|Win32
+		{0496DF42-D7AD-46B6-B10C-C57A07E89B0D}.Release-Patch|x86.Build.0 = Release-Patch|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
