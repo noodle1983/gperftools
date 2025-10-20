@@ -61,7 +61,7 @@ analyze_diff(\%before_data, \%after_data);
 
 sub print_usage {
     print <<EOF;
-用法: perl heap_diff_analyzer_integrated.pl [选项]
+用法: perl heap_diff_analyzer.pl [选项]
 
 选项:
   --before=FILE     指定前一个heap profile文件
@@ -74,8 +74,8 @@ sub print_usage {
   --help, -h        显示此帮助信息
 
 示例:
-  perl heap_diff_analyzer_integrated.pl --before=heap1.heap --after=heap2.heap
-  perl heap_diff_analyzer_integrated.pl --before=heap1.heap --after=heap2.heap --min-bytes=1024 --process=myprogram
+  perl heap_diff_analyzer.pl --before=heap1.heap --after=heap2.heap
+  perl heap_diff_analyzer.pl --before=heap1.heap --after=heap2.heap --min-bytes=1024 --process=myprogram
 
 EOF
 }
