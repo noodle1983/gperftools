@@ -50,7 +50,7 @@
 static int g_new_hook_calls = 0;
 static int g_delete_hook_calls = 0;
 
-void TestNewHook(const void* ptr, size_t size) {
+void TestNewHook(const void* ptr, size_t size, const char* from) {
   void* result[5];
 
   ASSERT_LE(MallocHook_GetCallerStackTrace(
@@ -61,7 +61,7 @@ void TestNewHook(const void* ptr, size_t size) {
   g_new_hook_calls++;
 }
 
-void TestDeleteHook(const void* ptr) {
+void TestDeleteHook(const void* ptr, const char* from) {
   g_delete_hook_calls++;
 }
 

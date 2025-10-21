@@ -154,15 +154,23 @@ static int64_t last_dump_time;   // The time of the last dump
 
 static HeapProfileTable* heap_profile;  // the heap profile table
 
+static HeapProfileTable* heap_profile_for_dumping = nullptr; //assign with heap_lock
+static SpinLock dumping_mutex;
+static bool is_to_stop = false;
+
 //----------------------------------------------------------------------
 // Profile generation
 //----------------------------------------------------------------------
 
 // Input must be a buffer of size at least 1MB.
-static void DoDumpHeapProfileLocked(tcmalloc::GenericWriter* writer) {
+static void DoCopyHeapProfileLocked() {
   RAW_DCHECK(heap_lock.IsHeld(), "");
+  //if (is_on) {
+  //  heap_profile->SaveProfile(writer);
+  //}
+  if (heap_profile_for_dumping) { return; }
   if (is_on) {
-    heap_profile->SaveProfile(writer);
+    heap_profile_for_dumping = heap_profile->MakeCopyForDump();
   }
 }
 
@@ -170,8 +178,18 @@ extern "C" char* GetHeapProfile() {
   tcmalloc::ChunkedWriterConfig config(ProfilerMalloc, ProfilerFree);
 
   return tcmalloc::WithWriterToStrDup(config, [] (tcmalloc::GenericWriter* writer) {
-    SpinLockHolder l(&heap_lock);
-    DoDumpHeapProfileLocked(writer);
+      {
+          SpinLockHolder l(&heap_lock);
+          DoCopyHeapProfileLocked();
+      }
+      if (heap_profile_for_dumping) {
+          SpinLockHolder lock(&dumping_mutex);
+          if (heap_profile_for_dumping) {
+              heap_profile_for_dumping->SaveProfile(writer);
+              heap_profile->FreeCopy(heap_profile_for_dumping);
+          }
+      }
+      if (is_to_stop) { HeapProfilerStop(); }
   });
 }
 
@@ -180,14 +198,26 @@ static void NewHook(const void* ptr, size_t size);
 static void DeleteHook(const void* ptr);
 
 // Helper for HeapProfilerDump.
-static void DumpProfileLocked(const char* reason) {
-  RAW_DCHECK(heap_lock.IsHeld(), "");
-  RAW_DCHECK(is_on, "");
-  RAW_DCHECK(!dumping, "");
+static void MaybeDumpProfile(const char* reason) {
 
-  if (filename_prefix == nullptr) return;  // we do not yet need dumping
+  if (!heap_profile_for_dumping) { return; }
+  if (dumping) { return; }
 
-  dumping = true;
+  HeapProfileTable* tmp_heap_profile = nullptr;
+  {
+      SpinLockHolder lock(&dumping_mutex);
+      if (!heap_profile_for_dumping) { return; }
+	  if (dumping) { return; }
+	  if (filename_prefix == nullptr) return;  // we do not yet need dumping
+
+      tmp_heap_profile = heap_profile_for_dumping;
+      heap_profile_for_dumping = nullptr;
+	  dumping = true;
+  }
+
+  //RAW_DCHECK(heap_lock.IsHeld(), "");
+  //RAW_DCHECK(is_on, "");
+  //RAW_DCHECK(!dumping, "");
 
   // Make file name
   char file_name[1000];
@@ -209,7 +239,9 @@ static void DumpProfileLocked(const char* reason) {
   using FileWriter = tcmalloc::RawFDGenericWriter<1 << 20>;
   FileWriter* writer = new (ProfilerMalloc(sizeof(FileWriter))) FileWriter(fd);
 
-  DoDumpHeapProfileLocked(writer);
+  //DoDumpHeapProfileLocked(writer);
+  tmp_heap_profile->SaveProfile(writer);
+  heap_profile->FreeCopy(tmp_heap_profile);
 
   // Note: as part of running destructor, it saves whatever stuff we left buffered in the writer
   writer->~FileWriter();
@@ -226,45 +258,45 @@ static void DumpProfileLocked(const char* reason) {
 
 // Dump a profile after either an allocation or deallocation, if
 // the memory use has changed enough since the last dump.
-static void MaybeDumpProfileLocked() {
+static void MaybeCopyProfileLocked(char* buf, size_t buf_size) {
   if (!dumping) {
     const HeapProfileTable::Stats& total = heap_profile->total();
     const int64_t inuse_bytes = total.alloc_size - total.free_size;
     bool need_to_dump = false;
-    char buf[128];
 
     if (FLAGS_heap_profile_allocation_interval > 0 &&
         total.alloc_size >=
         last_dump_alloc + FLAGS_heap_profile_allocation_interval) {
-      snprintf(buf, sizeof(buf), ("%" PRId64 " MB allocated cumulatively, "
+      snprintf(buf, buf_size, ("%" PRId64 " MB allocated cumulatively, "
                                   "%" PRId64 " MB currently in use"),
                total.alloc_size >> 20, inuse_bytes >> 20);
       need_to_dump = true;
     } else if (FLAGS_heap_profile_deallocation_interval > 0 &&
                total.free_size >=
                last_dump_free + FLAGS_heap_profile_deallocation_interval) {
-      snprintf(buf, sizeof(buf), ("%" PRId64 " MB freed cumulatively, "
+      snprintf(buf, buf_size, ("%" PRId64 " MB freed cumulatively, "
                                   "%" PRId64 " MB currently in use"),
                total.free_size >> 20, inuse_bytes >> 20);
       need_to_dump = true;
     } else if (FLAGS_heap_profile_inuse_interval > 0 &&
                inuse_bytes >
                high_water_mark + FLAGS_heap_profile_inuse_interval) {
-      snprintf(buf, sizeof(buf), "%" PRId64 " MB currently in use",
+      snprintf(buf, buf_size, "%" PRId64 " MB currently in use",
                inuse_bytes >> 20);
       need_to_dump = true;
     } else if (FLAGS_heap_profile_time_interval > 0 ) {
       int64_t current_time = time(nullptr);
       if (current_time - last_dump_time >=
           FLAGS_heap_profile_time_interval) {
-        snprintf(buf, sizeof(buf), "%" PRId64 " sec since the last dump",
+        snprintf(buf, buf_size, "%" PRId64 " sec since the last dump",
                  current_time - last_dump_time);
         need_to_dump = true;
         last_dump_time = current_time;
       }
     }
     if (need_to_dump) {
-      DumpProfileLocked(buf);
+      //DumpProfileLocked(buf);
+      DoCopyHeapProfileLocked();
 
       last_dump_alloc = total.alloc_size;
       last_dump_free = total.free_size;
@@ -279,29 +311,47 @@ static void MaybeDumpProfileLocked() {
 //----------------------------------------------------------------------
 
 // Record an allocation in the profile.
-static void NewHook(const void* ptr, size_t bytes) {
+static void NewHook(const void* ptr, size_t bytes, const char* from) {
   if (!ptr) return;
 
   // Take the stack trace outside the critical section.
   static constexpr int kDepth = 32;
   void* stack[kDepth];
+  char buf[128] = { 0 };
   int depth = tcmalloc::GrabBacktrace(stack, kDepth, 1);
-  SpinLockHolder l(&heap_lock);
-  if (is_on) {
-    heap_profile->RecordAlloc(ptr, bytes, depth, stack);
-    MaybeDumpProfileLocked();
+  {
+      SpinLockHolder l(&heap_lock);
+      if (is_on) {
+          heap_profile->RecordAlloc(ptr, bytes, depth, stack);
+          if (!from || (strcmp(from, "Heap") != 0)) {
+              MaybeCopyProfileLocked(buf, sizeof(buf) - 1);
+          }
+      }
   }
+  if (!from || (strcmp(from, "Heap") != 0)) {
+    MaybeDumpProfile(buf);
+  }
+  if (is_to_stop) { HeapProfilerStop(); }
 }
 
 // Record a deallocation in the profile.
-static void DeleteHook(const void* ptr) {
+static void DeleteHook(const void* ptr, const char* from) {
   if (!ptr) return;
 
-  SpinLockHolder l(&heap_lock);
-  if (is_on) {
-    heap_profile->RecordFree(ptr);
-    MaybeDumpProfileLocked();
+  char buf[128] = { 0 };
+  {
+      SpinLockHolder l(&heap_lock);
+      if (is_on) {
+          heap_profile->RecordFree(ptr);
+          if (!from || (strcmp(from, "Heap") != 0)) {
+              MaybeCopyProfileLocked(buf, sizeof(buf) - 1);
+          }
+      }
   }
+  if (!from || (strcmp(from, "Heap") != 0)) {
+    MaybeDumpProfile(buf);
+  }
+  if (is_to_stop) { HeapProfilerStop(); }
 }
 
 //----------------------------------------------------------------------
@@ -320,6 +370,7 @@ extern "C" void HeapProfilerStart(const char* prefix) {
   if (is_on) return;
 
   is_on = true;
+  is_to_stop = false;
 
   RAW_VLOG(0, "Starting tracking the heap");
 
@@ -361,7 +412,13 @@ extern "C" int IsHeapProfilerRunning() {
 extern "C" void HeapProfilerStop() {
   SpinLockHolder l(&heap_lock);
 
+  if (heap_profile_for_dumping || dumping) {
+      is_to_stop = true;
+      return;
+  }
+
   if (!is_on) return;
+  is_to_stop = false;
 
   // Unset our new/delete hooks, checking they were set:
   RAW_CHECK(MallocHook::RemoveNewHook(&NewHook), "");
@@ -384,10 +441,18 @@ extern "C" void HeapProfilerStop() {
 }
 
 extern "C" void HeapProfilerDump(const char *reason) {
-  SpinLockHolder l(&heap_lock);
-  if (is_on && !dumping) {
-    DumpProfileLocked(reason);
-  }
+  //SpinLockHolder l(&heap_lock);
+  //if (is_on && !dumping) {
+  //  DumpProfileLocked(reason);
+  //}
+    {
+        SpinLockHolder l(&heap_lock);
+        if (is_on && !dumping) {
+            DoCopyHeapProfileLocked();
+        }
+    }
+    MaybeDumpProfile(reason);
+    if (is_to_stop) { HeapProfilerStop(); }
 }
 
 // Signal handler that is registered when a user selectable signal
@@ -398,9 +463,12 @@ static void HeapProfilerDumpSignal(int signal_number) {
     return;
   }
   if (is_on && !dumping) {
-    DumpProfileLocked("signal");
+    //DumpProfileLocked("signal");
+	DoCopyHeapProfileLocked();
   }
   heap_lock.Unlock();
+  MaybeDumpProfile("signal");
+  if (is_to_stop) { HeapProfilerStop(); }
 }
 
 

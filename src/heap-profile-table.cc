@@ -131,6 +131,39 @@ HeapProfileTable::~HeapProfileTable() {
   bucket_table_ = nullptr;
 }
 
+HeapProfileTable* HeapProfileTable::MakeCopyForDump() {
+  HeapProfileTable* heap_profile = new(alloc_(sizeof(HeapProfileTable)))
+		HeapProfileTable(alloc_, dealloc_);
+
+  // total
+  heap_profile->total_ = total_;
+
+  // copy Bucket
+  for (int i = 0; i < kHashTableSize; i++) {
+    for (Bucket* curr = bucket_table_[i]; curr != nullptr; curr = curr->next) {
+
+        // the anti-seq as input 
+        auto bucket = heap_profile->GetBucket(curr->depth, curr->stack);
+        bucket->allocs = curr->allocs;
+        bucket->alloc_size = curr->alloc_size;
+        bucket->frees = curr->frees;
+        bucket->free_size = curr->free_size;
+    }
+  }
+  RAW_DCHECK(heap_profile->num_buckets_ == num_buckets_, "");
+
+  //leave address map alone
+
+  return heap_profile;
+}
+
+void HeapProfileTable::FreeCopy(HeapProfileTable*& heap_profile_)
+{
+  heap_profile_->~HeapProfileTable();
+  dealloc_(heap_profile_);
+  heap_profile_ = nullptr;
+}
+
 HeapProfileTable::Bucket* HeapProfileTable::GetBucket(int depth,
                                                       const void* const key[]) {
   // Make hash-value

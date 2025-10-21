@@ -205,25 +205,25 @@ MallocHook_DeleteHook MallocHook_SetDeleteHook(MallocHook_DeleteHook hook) {
 
 namespace tcmalloc {
 
-void InvokeNewHookSlow(const void* p, size_t s) {
+void InvokeNewHookSlow(const void* p, size_t s, const char* from) {
   if (IsEmergencyPtr(p)) {
     return;
   }
   MallocHook::NewHook hooks[kHookListMaxValues];
   int num_hooks = base::internal::new_hooks_.Traverse(hooks, kHookListMaxValues);
   for (int i = 0; i < num_hooks; i++) {
-    hooks[i](p, s);
+    hooks[i](p, s, from);
   }
 }
 
-void InvokeDeleteHookSlow(const void* p) {
+void InvokeDeleteHookSlow(const void* p, const char* from) {
   if (IsEmergencyPtr(p)) {
     return;
   }
   MallocHook::DeleteHook hooks[kHookListMaxValues];
   int num_hooks = base::internal::delete_hooks_.Traverse(hooks, kHookListMaxValues);
   for (int i = 0; i < num_hooks; i++) {
-    hooks[i](p);
+    hooks[i](p, from);
   }
 }
 

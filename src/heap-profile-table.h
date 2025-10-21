@@ -78,6 +78,9 @@ class HeapProfileTable {
   HeapProfileTable(Allocator alloc, DeAllocator dealloc);
   ~HeapProfileTable();
 
+  HeapProfileTable* MakeCopyForDump();
+  void FreeCopy(HeapProfileTable*& heap_profile_);
+
   // Record an allocation at 'ptr' of 'bytes' bytes.  'stack_depth'
   // and 'call_stack' identifying the function that requested the
   // allocation. They can be generated using GetCallerStackTrace() above.

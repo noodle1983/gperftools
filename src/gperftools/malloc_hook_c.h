@@ -67,13 +67,13 @@ int MallocHook_GetCallerStackTrace(void** result, int max_depth,
  * failure.
  */
 
-typedef void (*MallocHook_NewHook)(const void* ptr, size_t size);
+typedef void (*MallocHook_NewHook)(const void* ptr, size_t size, const char* from);
 PERFTOOLS_DLL_DECL
 int MallocHook_AddNewHook(MallocHook_NewHook hook);
 PERFTOOLS_DLL_DECL
 int MallocHook_RemoveNewHook(MallocHook_NewHook hook);
 
-typedef void (*MallocHook_DeleteHook)(const void* ptr);
+typedef void (*MallocHook_DeleteHook)(const void* ptr, const char* from);
 PERFTOOLS_DLL_DECL
 int MallocHook_AddDeleteHook(MallocHook_DeleteHook hook);
 PERFTOOLS_DLL_DECL

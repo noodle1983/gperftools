@@ -929,13 +929,13 @@ LPVOID WINAPI WindowsInfo::Perftools_HeapAlloc(HANDLE hHeap, DWORD dwFlags,
   LPVOID result = ((LPVOID (WINAPI *)(HANDLE, DWORD, DWORD_PTR))
                    function_info_[kHeapAlloc].origstub_fn)(
                        hHeap, dwFlags, dwBytes);
-  tcmalloc::InvokeNewHook(result, dwBytes);
+  tcmalloc::InvokeNewHook(result, dwBytes, "Heap");
   return result;
 }
 
 BOOL WINAPI WindowsInfo::Perftools_HeapFree(HANDLE hHeap, DWORD dwFlags,
                                             LPVOID lpMem) {
-  tcmalloc::InvokeDeleteHook(lpMem);
+  tcmalloc::InvokeDeleteHook(lpMem, "Heap");
 
   // We perform this check to work around a malloc/HeapFree mismatch
   // in shell32.dll versions [10.0.22000.0, 10.0.22621.900)

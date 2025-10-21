@@ -126,18 +126,18 @@ ATTRIBUTE_VISIBILITY_HIDDEN extern HookList<MallocHook::DeleteHook> delete_hooks
 // The following method is DEPRECATED
 
 namespace tcmalloc {
-void InvokeNewHookSlow(const void* p, size_t s);
-void InvokeDeleteHookSlow(const void* p);
+void InvokeNewHookSlow(const void* p, size_t s, const char* from);
+void InvokeDeleteHookSlow(const void* p, const char* from);
 
-static inline void InvokeNewHook(const void* p, size_t s) {
+static inline void InvokeNewHook(const void* p, size_t s, const char* from = nullptr) {
   if (PREDICT_FALSE(!base::internal::new_hooks_.empty())) {
-    InvokeNewHookSlow(p, s);
+    InvokeNewHookSlow(p, s, from);
   }
 }
 
-static inline void InvokeDeleteHook(const void* p) {
+static inline void InvokeDeleteHook(const void* p, const char* from = nullptr) {
   if (PREDICT_FALSE(!base::internal::delete_hooks_.empty())) {
-    InvokeDeleteHookSlow(p);
+    InvokeDeleteHookSlow(p, from);
   }
 }
 
