@@ -797,9 +797,11 @@ bool PatchAllModules() {
 // TODO(csilvers): refactor tcmalloc.cc into two files, so I can link
 // against the file with do_malloc, and ignore the one with malloc.
 #include "tcmalloc.cc"
+#include "auto_profile.h"
 
 template<int T>
 void* LibcInfoWithPatchFunctions<T>::Perftools_malloc(size_t size) __THROW {
+  check_start_profile();
   return malloc_fast_path<tcmalloc::malloc_oom>(size);
 }
 
@@ -864,11 +866,13 @@ void* LibcInfoWithPatchFunctions<T>::Perftools_calloc(
 
 template<int T>
 void* LibcInfoWithPatchFunctions<T>::Perftools_new(size_t size) {
+  check_start_profile();
   return malloc_fast_path<tcmalloc::cpp_throw_oom>(size);
 }
 
 template<int T>
 void* LibcInfoWithPatchFunctions<T>::Perftools_newarray(size_t size) {
+  check_start_profile();
   return malloc_fast_path<tcmalloc::cpp_throw_oom>(size);
 }
 

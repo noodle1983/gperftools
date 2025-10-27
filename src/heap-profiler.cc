@@ -513,7 +513,7 @@ static void HeapProfilerInit() {
 
   HeapProfileTable::CleanupOldProfiles(fname);
 
-  HeapProfilerStart(fname);
+  // HeapProfilerStart(fname);
 }
 
 // class used for finalization -- dumps the heap-profile at program exit
