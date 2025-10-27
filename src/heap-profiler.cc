@@ -264,7 +264,7 @@ static void MaybeCopyProfileLocked(char* buf, size_t buf_size) {
     const int64_t inuse_bytes = total.alloc_size - total.free_size;
     bool need_to_dump = false;
 
-    if (FLAGS_heap_profile_allocation_interval > 0 &&
+    /*if (FLAGS_heap_profile_allocation_interval > 0 &&
         total.alloc_size >=
         last_dump_alloc + FLAGS_heap_profile_allocation_interval) {
       snprintf(buf, buf_size, ("%" PRId64 " MB allocated cumulatively, "
@@ -278,7 +278,7 @@ static void MaybeCopyProfileLocked(char* buf, size_t buf_size) {
                                   "%" PRId64 " MB currently in use"),
                total.free_size >> 20, inuse_bytes >> 20);
       need_to_dump = true;
-    } else if (FLAGS_heap_profile_inuse_interval > 0 &&
+    } else*/ if (FLAGS_heap_profile_inuse_interval > 0 &&
                inuse_bytes >
                high_water_mark + FLAGS_heap_profile_inuse_interval) {
       snprintf(buf, buf_size, "%" PRId64 " MB currently in use",
@@ -313,6 +313,7 @@ static void MaybeCopyProfileLocked(char* buf, size_t buf_size) {
 // Record an allocation in the profile.
 static void NewHook(const void* ptr, size_t bytes, const char* from) {
   if (!ptr) return;
+  if (from && (strcmp(from, "Heap") == 0)) { return; }
 
   // Take the stack trace outside the critical section.
   static constexpr int kDepth = 32;
@@ -337,6 +338,7 @@ static void NewHook(const void* ptr, size_t bytes, const char* from) {
 // Record a deallocation in the profile.
 static void DeleteHook(const void* ptr, const char* from) {
   if (!ptr) return;
+  if (from && (strcmp(from, "Heap") == 0)) { return; }
 
   char buf[128] = { 0 };
   {

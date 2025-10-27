@@ -68,7 +68,7 @@
 //----------------------------------------------------------------------
 
 DEFINE_bool(cleanup_old_heap_profiles,
-            EnvToBool("HEAP_PROFILE_CLEANUP", true),
+            EnvToBool("HEAP_PROFILE_CLEANUP", false),
             "At initialization time, delete old heap profiles.");
 
 DEFINE_int32(heap_check_max_leaks,
