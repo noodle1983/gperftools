@@ -104,7 +104,7 @@ DEFINE_int64(heap_profile_inuse_interval,
              "the high-water memory usage mark increases by the specified "
              "number of bytes.");
 DEFINE_int64(heap_profile_time_interval,
-             EnvToInt64("HEAP_PROFILE_TIME_INTERVAL", 0),
+             EnvToInt64("HEAP_PROFILE_TIME_INTERVAL", 60),
              "If non-zero, dump heap profiling information once every "
              "specified number of seconds since the last dump.");
 
@@ -483,7 +483,11 @@ static void HeapProfilerInit() {
   // Everything after this point is for setting up the profiler based on envvar
   char fname[PATH_MAX];
   if (!GetUniquePathFromEnv("HEAPPROFILE", fname)) {
-    return;
+#ifdef _WIN32
+      snprintf(fname, sizeof(fname) - 1, "heap_profile_%d", _getpid());
+#else
+      snprintf(fname, sizeof(fname) - 1, "heap_profile_%d", getpid());
+#endif
   }
   // We do a uid check so we don't write out files in a setuid executable.
 #ifdef HAVE_GETEUID
