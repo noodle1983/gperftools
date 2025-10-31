@@ -104,7 +104,7 @@ DEFINE_int64(heap_profile_inuse_interval,
              "the high-water memory usage mark increases by the specified "
              "number of bytes.");
 DEFINE_int64(heap_profile_time_interval,
-             EnvToInt64("HEAP_PROFILE_TIME_INTERVAL", 60),
+             EnvToInt64("HEAP_PROFILE_TIME_INTERVAL", 0),
              "If non-zero, dump heap profiling information once every "
              "specified number of seconds since the last dump.");
 
