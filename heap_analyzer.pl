@@ -121,11 +121,11 @@ sub load_module_cache_from_heap {
                 $module_count++;
                 
                 # 也存储完整路径作为key，以防只有完整路径的情况
-                $module_cache{$module_path} = {
-                    base_address => bighex('0x' . $start_addr),
-                    size => $size,
-                    full_path => $module_path
-                };
+                # $module_cache{$module_path} = {
+                #     base_address => bighex('0x' . $start_addr),
+                #     size => $size,
+                #     full_path => $module_path
+                # };
             }
         }
     }
@@ -135,6 +135,14 @@ sub load_module_cache_from_heap {
     if ($module_count > 0) {
         print "  - 从heap文件加载了 $module_count 个模块的地址信息\n";
         $module_cache_loaded = 1;
+		
+		# 打印加载的模块信息（可选，用于调试）
+        print "  加载的模块:\n";
+        foreach my $module (sort keys %module_cache) {
+            my $info = $module_cache{$module};
+            printf "    %s: 0x%X (大小: 0x%X bytes)\n", 
+                   $module, $info->{base_address}, $info->{size};
+        }
     } else {
         print "  - 警告: 未在heap文件中找到模块映射信息\n";
         print "  - 请确保heap文件包含MAPPED_LIBRARIES部分\n";
