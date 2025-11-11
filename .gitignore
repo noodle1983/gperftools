@@ -168,3 +168,8 @@
 /vendor/libbacktrace-integration/.dirstamp
 /vendor/libbacktrace/.deps
 /vendor/libbacktrace/.dirstamp
+.vs/
+build.bat
+build_win/
+*.vcxproj.user
+x64
