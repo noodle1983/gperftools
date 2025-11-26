@@ -11,6 +11,7 @@
 #include <fstream>
 #include <stdio.h>
 #include <sstream>
+#include <algorithm>
 
 const double MB = 1.0 * (1<<20);
 

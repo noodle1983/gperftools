@@ -97,6 +97,9 @@
 #include "malloc_hook-inl.h"
 #include "preamble_patcher.h"
 
+#include "auto_profile.h"
+#include "handle_profile.h"
+
 // The maximum number of modules we allow to be in one executable
 const int kMaxModules = 8182;
 
@@ -586,6 +589,7 @@ void LibcInfoWithPatchFunctions<T>::Unpatch() {
 }
 
 void WindowsInfo::Patch() {
+  ::PatchHandleFunctions();
   HMODULE hkernel32 = ::GetModuleHandleA("kernel32");
   CHECK_NE(hkernel32, nullptr);
 
@@ -612,6 +616,7 @@ void WindowsInfo::Patch() {
 }
 
 void WindowsInfo::Unpatch() {
+  ::UnpatchHandleFunctions();
   // We have to cast our GenericFnPtrs to void* for unpatch.  This is
   // contra the C++ spec; we use C-style casts to empahsize that.
   for (int i = 0; i < kNumFunctions; i++) {
@@ -797,8 +802,6 @@ bool PatchAllModules() {
 // TODO(csilvers): refactor tcmalloc.cc into two files, so I can link
 // against the file with do_malloc, and ignore the one with malloc.
 #include "tcmalloc.cc"
-#include "auto_profile.h"
-#include "handle_profile.h"
 
 template<int T>
 void* LibcInfoWithPatchFunctions<T>::Perftools_malloc(size_t size) __THROW {
