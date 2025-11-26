@@ -16,6 +16,7 @@ static std::atomic<time_t> pre_check_time = 0;
 static SpinLock auto_start_lock;
 static size_t START_PROFILE_SIZE = (1 << 30); // 1GB
 #include <stdio.h>
+PERFTOOLS_DLL_DECL int IsHeapProfilerRunning();
 
 static inline std::string my_trim(const std::string& str) {
 	size_t start = str.find_first_not_of(" \t");
@@ -38,6 +39,56 @@ int file_exists(const char* filename) {
 		return 1;
 	}
 	return 0;
+}
+
+PERFTOOLS_DLL_DECL size_t set_profile(bool is_enable, const char* start_profile_size)
+{
+	if (!is_enable) {
+		enabled = false;
+		if (IsHeapProfilerRunning()) {
+			HeapProfilerStop();
+		}
+		printf("profile disabled.\n");
+		return 0;
+	}
+
+	enabled = true;
+	std::string start_profile_size_str(start_profile_size);
+	std::string num_str;
+	std::string unit_str;
+	size_t i = 0;
+
+	start_profile_size_str.erase(0, start_profile_size_str.find_first_not_of(" \t"));
+	start_profile_size_str.erase(start_profile_size_str.find_last_not_of(" \t") + 1);
+	while (i < start_profile_size_str.length() && (std::isdigit(start_profile_size_str[i]) || start_profile_size_str[i] == '.')) { i++; }
+	if (i > 0) {
+		num_str = start_profile_size_str.substr(0, i);
+		unit_str = my_to_upper(my_trim(start_profile_size_str.substr(i)));
+	}
+
+	if (num_str.empty()) { 
+		printf("profile enabled. START_PROFILE_SIZE:%zu\n", START_PROFILE_SIZE);
+		return START_PROFILE_SIZE;
+	}
+	double d = std::stod(num_str);
+
+	if (!unit_str.empty()) {
+		if (unit_str == "KB" || unit_str == "K") {
+			d *= 1024;
+		}
+		else if (unit_str == "MB" || unit_str == "M") {
+			d *= 1024 * 1024;
+		}
+		else if (unit_str == "GB" || unit_str == "G") {
+			d *= 1024 * 1024 * 1024;
+		}
+		else if (unit_str == "TB" || unit_str == "T") {
+			d *= 1024 * 1024 * 1024 * 1024ULL;
+		}
+	}
+	START_PROFILE_SIZE = (size_t)d;
+	printf("profile enabled. START_PROFILE_SIZE:%zu\n", START_PROFILE_SIZE);
+	return START_PROFILE_SIZE;
 }
 
 void check_start_profile()
@@ -72,38 +123,16 @@ void check_start_profile()
 				value.erase(value.find_last_not_of(" \t") + 1);
 
 				if (key == "START_PROFILE_SIZE") {
-					std::string num_str;
-					std::string unit_str;
-					size_t i = 0;
-					while (i < value.length() && (std::isdigit(value[i]) || value[i] == '.')) { i++; }
-					if (i > 0) {
-						num_str = value.substr(0, i);
-						unit_str = my_to_upper(my_trim(value.substr(i)));
-					}
-
-					double d = std::stod(num_str);
-					if (!unit_str.empty()) {
-						if (unit_str == "KB" || unit_str == "K") {
-							d *= 1024;
-						}
-						else if (unit_str == "MB" || unit_str == "M") {
-							d *= 1024 * 1024;
-						}
-						else if (unit_str == "GB" || unit_str == "G") {
-							d *= 1024 * 1024 * 1024;
-						}
-						else if (unit_str == "TB" || unit_str == "T") {
-							d *= 1024 * 1024 * 1024 * 1024ULL;
-						}
-					}
-					START_PROFILE_SIZE = (size_t)d;
+					set_profile(true, value.c_str());
 				} else {
 					printf("profile enabled. unknown config:%s = %s\n", key.c_str(), value.c_str());
 				}
 			}
 		}
 		file.close();
-		printf("profile enabled. START_PROFILE_SIZE:%zu\n", START_PROFILE_SIZE);
+		if (enabled) {
+			printf("profile enabled. START_PROFILE_SIZE:%zu\n", START_PROFILE_SIZE);
+		}
 	}
 
 	time_t now = time(0);
@@ -123,7 +152,6 @@ void check_start_profile()
 
 	size_t heap_size;
 	MallocExtension::instance()->GetNumericProperty("generic.heap_size", &heap_size);
-	PERFTOOLS_DLL_DECL int IsHeapProfilerRunning();
 	if (enabled 
 		&& heap_size > START_PROFILE_SIZE
 		&& !IsHeapProfilerRunning())
