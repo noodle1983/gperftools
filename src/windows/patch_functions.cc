@@ -798,6 +798,7 @@ bool PatchAllModules() {
 // against the file with do_malloc, and ignore the one with malloc.
 #include "tcmalloc.cc"
 #include "auto_profile.h"
+#include "handle_profile.h"
 
 template<int T>
 void* LibcInfoWithPatchFunctions<T>::Perftools_malloc(size_t size) __THROW {
