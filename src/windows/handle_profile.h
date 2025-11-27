@@ -45,12 +45,22 @@
 #include <windows.h>
 #include <iostream>
 #include <cstdint>
+#include <map>
+#include <string>
+#include <ctime>
 
-// Include Detours header for function hooking
-// The path will be resolved through CMake include_directories
-#include "detours/detours.h"
+// Forward declarations for Detours functions to avoid include issues
+extern "C" {
+  LONG WINAPI DetourTransactionBegin(VOID);
+  LONG WINAPI DetourTransactionAbort(VOID);
+  LONG WINAPI DetourTransactionCommit(VOID);
+  LONG WINAPI DetourUpdateThread(HANDLE hThread);
+  LONG WINAPI DetourAttach(PVOID *ppPointer, PVOID pDetour);
+  LONG WINAPI DetourDetach(PVOID *ppPointer, PVOID pDetour);
+}
 
-#include "base/logging.h"
+// Include stacktrace functionality
+#include "../gperftools/stacktrace.h"
 
 // This is the same basename that is used in the tcmalloc library.
 #define PERFTOOLS_DLL_DECL __declspec(dllexport)
@@ -75,6 +85,117 @@
 #pragma warning(push)
 #pragma warning(disable : 4530)  // C++ exception handler used, but unwind
                                  // semantics are not enabled
+
+// Handle types for tracking
+enum HandleType {
+  HANDLE_TYPE_EVENT = 0,
+  HANDLE_TYPE_THREAD,
+  HANDLE_TYPE_FILE,
+  HANDLE_TYPE_MUTEX,
+  HANDLE_TYPE_SEMAPHORE,
+  HANDLE_TYPE_TIMER,
+  HANDLE_TYPE_JOB,
+  HANDLE_TYPE_PIPE,
+  HANDLE_TYPE_HEAP,
+  HANDLE_TYPE_CONSOLE,
+  HANDLE_TYPE_MEMORY_RESOURCE,
+  HANDLE_TYPE_THREADPOOL_TIMER,
+  HANDLE_TYPE_THREADPOOL_WAIT,
+  HANDLE_TYPE_THREADPOOL_IO,
+  HANDLE_TYPE_THREADPOOL_WORK,
+  HANDLE_TYPE_UNKNOWN
+};
+
+// Structure to store handle information
+struct HandleInfo {
+  HANDLE handle;
+  HandleType type;
+  time_t creation_time;
+  void* stack_trace[32];  // Stack trace when handle was created
+  int stack_depth;
+  std::string name;  // Optional name for the handle
+  
+  HandleInfo() : handle(nullptr), type(HANDLE_TYPE_UNKNOWN), creation_time(0), stack_depth(0), name("") {
+    memset(stack_trace, 0, sizeof(stack_trace));
+  }
+  
+  HandleInfo(HANDLE h, HandleType t, const std::string& n = "") 
+    : handle(h), type(t), creation_time(time(nullptr)), stack_depth(0), name(n) {
+    memset(stack_trace, 0, sizeof(stack_trace));
+    // Capture stack trace, skipping this function and the caller (2 frames)
+    stack_depth = GetStackTrace(stack_trace, 32, 2);
+  }
+};
+
+// Global map to store handle information
+std::map<HANDLE, HandleInfo> handle_map;
+CRITICAL_SECTION handle_map_lock;
+bool handle_tracking_enabled = false;
+
+// Helper functions for handle tracking
+void InitializeHandleTracking() {
+  if (!handle_tracking_enabled) {
+    InitializeCriticalSection(&handle_map_lock);
+    handle_tracking_enabled = true;
+  }
+}
+
+void CleanupHandleTracking() {
+  if (handle_tracking_enabled) {
+    EnterCriticalSection(&handle_map_lock);
+    handle_map.clear();
+    LeaveCriticalSection(&handle_map_lock);
+    DeleteCriticalSection(&handle_map_lock);
+    handle_tracking_enabled = false;
+  }
+}
+
+// Function to print stack trace for debugging
+void PrintStackTrace(void** stack_trace, int depth) {
+  if (depth <= 0) {
+    std::cout << "  No stack trace available" << std::endl;
+    return;
+  }
+  
+  for (int i = 0; i < depth && i < 32; i++) {
+    std::cout << "  #" << i << " " << stack_trace[i] << std::endl;
+  }
+}
+
+void RecordHandleCreation(HANDLE handle, HandleType type, const std::string& name) {
+  if (!handle_tracking_enabled || handle == nullptr || handle == INVALID_HANDLE_VALUE) {
+    return;
+  }
+  
+  EnterCriticalSection(&handle_map_lock);
+  handle_map[handle] = HandleInfo(handle, type, name);
+  
+  // Print information for debugging
+  HANDLE_TRACE(true,
+    std::cout << "Recorded handle creation: " << reinterpret_cast<uintptr_t>(handle) 
+              << " type: " << type << " name: " << name << std::endl;
+    PrintStackTrace(handle_map[handle].stack_trace, handle_map[handle].stack_depth);
+  );
+  
+  LeaveCriticalSection(&handle_map_lock);
+}
+
+void RecordHandleDestruction(HANDLE handle) {
+  if (!handle_tracking_enabled || handle == nullptr || handle == INVALID_HANDLE_VALUE) {
+    return;
+  }
+  
+  EnterCriticalSection(&handle_map_lock);
+  auto it = handle_map.find(handle);
+  if (it != handle_map.end()) {
+    // Print information for debugging
+    HANDLE_TRACE(true,
+      std::cout << "Recorded handle destruction: " << reinterpret_cast<uintptr_t>(handle) << std::endl;
+    );
+    handle_map.erase(it);
+  }
+  LeaveCriticalSection(&handle_map_lock);
+}
 
 // Handle function index constants
 const int CREATE_EVENT_A_INDEX = 0;
@@ -408,6 +529,9 @@ HandleFunctionInfo handle_function_info_[] = {
 
 // Handle patching functions using Detours
 void PatchHandleFunctions() {
+  // Initialize handle tracking
+  InitializeHandleTracking();
+  
   HMODULE kernel32_module = ::GetModuleHandleA("kernel32.dll");
   if (kernel32_module == nullptr) {
     return;
@@ -502,6 +626,12 @@ HANDLE WINAPI Perftools_CreateEventA(
                   handle_function_info_[CREATE_EVENT_A_INDEX].origstub_fn)(
                   lpEventAttributes, bManualReset, bInitialState, lpName);
                   
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    std::string name(lpName ? lpName : "");
+    RecordHandleCreation(result, HANDLE_TYPE_EVENT, name);
+  }
+                  
   HANDLE_TRACE(true,
     std::cout << "CreateEventA returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
   );
@@ -522,6 +652,13 @@ HANDLE WINAPI Perftools_CreateEventW(
   HANDLE result = ((HANDLE (WINAPI *)(LPSECURITY_ATTRIBUTES, BOOL, BOOL, LPCWSTR))
                   handle_function_info_[CREATE_EVENT_W_INDEX].origstub_fn)(
                   lpEventAttributes, bManualReset, bInitialState, lpName);
+                  
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    std::wstring wname(lpName ? lpName : L"");
+    std::string name(wname.begin(), wname.end());
+    RecordHandleCreation(result, HANDLE_TYPE_EVENT, name);
+  }
                   
   HANDLE_TRACE(true,
     std::cout << "CreateEventW returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
@@ -544,6 +681,12 @@ HANDLE WINAPI Perftools_CreateEventExA(
                   handle_function_info_[CREATE_EVENT_EX_A_INDEX].origstub_fn)(
                   lpEventAttributes, lpName, dwFlags, dwDesiredAccess);
                   
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    std::string name(lpName ? lpName : "");
+    RecordHandleCreation(result, HANDLE_TYPE_EVENT, name);
+  }
+                  
   HANDLE_TRACE(true,
     std::cout << "CreateEventExA returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
   );
@@ -565,6 +708,13 @@ HANDLE WINAPI Perftools_CreateEventExW(
                   handle_function_info_[CREATE_EVENT_EX_W_INDEX].origstub_fn)(
                   lpEventAttributes, lpName, dwFlags, dwDesiredAccess);
                   
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    std::wstring wname(lpName ? lpName : L"");
+    std::string name(wname.begin(), wname.end());
+    RecordHandleCreation(result, HANDLE_TYPE_EVENT, name);
+  }
+                  
   HANDLE_TRACE(true,
     std::cout << "CreateEventExW returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
   );
@@ -585,6 +735,12 @@ HANDLE WINAPI Perftools_CreateMutexA(
                   handle_function_info_[CREATE_MUTEX_A_INDEX].origstub_fn)(
                   lpMutexAttributes, bInitialOwner, lpName);
                   
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    std::string name(lpName ? lpName : "");
+    RecordHandleCreation(result, HANDLE_TYPE_MUTEX, name);
+  }
+                  
   HANDLE_TRACE(true,
     std::cout << "CreateMutexA returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
   );
@@ -604,6 +760,13 @@ HANDLE WINAPI Perftools_CreateMutexW(
   HANDLE result = ((HANDLE (WINAPI *)(LPSECURITY_ATTRIBUTES, BOOL, LPCWSTR))
                   handle_function_info_[CREATE_MUTEX_W_INDEX].origstub_fn)(
                   lpMutexAttributes, bInitialOwner, lpName);
+                  
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    std::wstring wname(lpName ? lpName : L"");
+    std::string name(wname.begin(), wname.end());
+    RecordHandleCreation(result, HANDLE_TYPE_MUTEX, name);
+  }
                   
   HANDLE_TRACE(true,
     std::cout << "CreateMutexW returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
@@ -626,6 +789,12 @@ HANDLE WINAPI Perftools_CreateMutexExA(
                   handle_function_info_[CREATE_MUTEX_EX_A_INDEX].origstub_fn)(
                   lpMutexAttributes, lpName, dwFlags, dwDesiredAccess);
                   
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    std::string name(lpName ? lpName : "");
+    RecordHandleCreation(result, HANDLE_TYPE_MUTEX, name);
+  }
+                  
   HANDLE_TRACE(true,
     std::cout << "CreateMutexExA returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
   );
@@ -646,6 +815,13 @@ HANDLE WINAPI Perftools_CreateMutexExW(
   HANDLE result = ((HANDLE (WINAPI *)(LPSECURITY_ATTRIBUTES, LPCWSTR, DWORD, DWORD))
                   handle_function_info_[CREATE_MUTEX_EX_W_INDEX].origstub_fn)(
                   lpMutexAttributes, lpName, dwFlags, dwDesiredAccess);
+                  
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    std::wstring wname(lpName ? lpName : L"");
+    std::string name(wname.begin(), wname.end());
+    RecordHandleCreation(result, HANDLE_TYPE_MUTEX, name);
+  }
                   
   HANDLE_TRACE(true,
     std::cout << "CreateMutexExW returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
@@ -668,6 +844,12 @@ HANDLE WINAPI Perftools_CreateSemaphoreA(
                   handle_function_info_[CREATE_SEMAPHORE_A_INDEX].origstub_fn)(
                   lpSemaphoreAttributes, lInitialCount, lMaximumCount, lpName);
                   
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    std::string name(lpName ? lpName : "");
+    RecordHandleCreation(result, HANDLE_TYPE_SEMAPHORE, name);
+  }
+                  
   HANDLE_TRACE(true,
     std::cout << "CreateSemaphoreA returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
   );
@@ -688,6 +870,13 @@ HANDLE WINAPI Perftools_CreateSemaphoreW(
   HANDLE result = ((HANDLE (WINAPI *)(LPSECURITY_ATTRIBUTES, LONG, LONG, LPCWSTR))
                   handle_function_info_[CREATE_SEMAPHORE_W_INDEX].origstub_fn)(
                   lpSemaphoreAttributes, lInitialCount, lMaximumCount, lpName);
+                  
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    std::wstring wname(lpName ? lpName : L"");
+    std::string name(wname.begin(), wname.end());
+    RecordHandleCreation(result, HANDLE_TYPE_SEMAPHORE, name);
+  }
                   
   HANDLE_TRACE(true,
     std::cout << "CreateSemaphoreW returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
@@ -713,6 +902,12 @@ HANDLE WINAPI Perftools_CreateSemaphoreExA(
                   handle_function_info_[CREATE_SEMAPHORE_EX_A_INDEX].origstub_fn)(
                   lpSemaphoreAttributes, lInitialCount, lMaximumCount, lpName, dwFlags, dwDesiredAccess);
                   
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    std::string name(lpName ? lpName : "");
+    RecordHandleCreation(result, HANDLE_TYPE_SEMAPHORE, name);
+  }
+                  
   HANDLE_TRACE(true,
     std::cout << "CreateSemaphoreExA returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
   );
@@ -737,6 +932,13 @@ HANDLE WINAPI Perftools_CreateSemaphoreExW(
                   handle_function_info_[CREATE_SEMAPHORE_EX_W_INDEX].origstub_fn)(
                   lpSemaphoreAttributes, lInitialCount, lMaximumCount, lpName, dwFlags, dwDesiredAccess);
                   
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    std::wstring wname(lpName ? lpName : L"");
+    std::string name(wname.begin(), wname.end());
+    RecordHandleCreation(result, HANDLE_TYPE_SEMAPHORE, name);
+  }
+                  
   HANDLE_TRACE(true,
     std::cout << "CreateSemaphoreExW returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
   );
@@ -757,6 +959,12 @@ HANDLE WINAPI Perftools_CreateWaitableTimerA(
                   handle_function_info_[CREATE_WAITABLE_TIMER_A_INDEX].origstub_fn)(
                   lpTimerAttributes, bManualReset, lpTimerName);
                   
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    std::string name(lpTimerName ? lpTimerName : "");
+    RecordHandleCreation(result, HANDLE_TYPE_TIMER, name);
+  }
+                  
   HANDLE_TRACE(true,
     std::cout << "CreateWaitableTimerA returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
   );
@@ -776,6 +984,13 @@ HANDLE WINAPI Perftools_CreateWaitableTimerW(
   HANDLE result = ((HANDLE (WINAPI *)(LPSECURITY_ATTRIBUTES, BOOL, LPCWSTR))
                   handle_function_info_[CREATE_WAITABLE_TIMER_W_INDEX].origstub_fn)(
                   lpTimerAttributes, bManualReset, lpTimerName);
+                  
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    std::wstring wname(lpTimerName ? lpTimerName : L"");
+    std::string name(wname.begin(), wname.end());
+    RecordHandleCreation(result, HANDLE_TYPE_TIMER, name);
+  }
                   
   HANDLE_TRACE(true,
     std::cout << "CreateWaitableTimerW returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
@@ -798,6 +1013,12 @@ HANDLE WINAPI Perftools_CreateWaitableTimerExA(
                   handle_function_info_[CREATE_WAITABLE_TIMER_EX_A_INDEX].origstub_fn)(
                   lpTimerAttributes, lpTimerName, dwFlags, dwDesiredAccess);
                   
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    std::string name(lpTimerName ? lpTimerName : "");
+    RecordHandleCreation(result, HANDLE_TYPE_TIMER, name);
+  }
+                  
   HANDLE_TRACE(true,
     std::cout << "CreateWaitableTimerExA returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
   );
@@ -818,6 +1039,13 @@ HANDLE WINAPI Perftools_CreateWaitableTimerExW(
   HANDLE result = ((HANDLE (WINAPI *)(LPSECURITY_ATTRIBUTES, LPCWSTR, DWORD, DWORD))
                   handle_function_info_[CREATE_WAITABLE_TIMER_EX_W_INDEX].origstub_fn)(
                   lpTimerAttributes, lpTimerName, dwFlags, dwDesiredAccess);
+                  
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    std::wstring wname(lpTimerName ? lpTimerName : L"");
+    std::string name(wname.begin(), wname.end());
+    RecordHandleCreation(result, HANDLE_TYPE_TIMER, name);
+  }
                   
   HANDLE_TRACE(true,
     std::cout << "CreateWaitableTimerExW returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
@@ -842,6 +1070,11 @@ HANDLE WINAPI Perftools_CreateThread(
                   handle_function_info_[CREATE_THREAD_INDEX].origstub_fn)(
                   lpThreadAttributes, dwStackSize, lpStartAddress, lpParameter, dwCreationFlags, lpThreadId);
                   
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    RecordHandleCreation(result, HANDLE_TYPE_THREAD, "CreateThread");
+  }
+                  
   HANDLE_TRACE(true,
     std::cout << "CreateThread returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
   );
@@ -865,6 +1098,11 @@ HANDLE WINAPI Perftools_CreateRemoteThread(
   HANDLE result = ((HANDLE (WINAPI *)(HANDLE, LPSECURITY_ATTRIBUTES, SIZE_T, LPTHREAD_START_ROUTINE, LPVOID, DWORD, LPDWORD))
                   handle_function_info_[CREATE_REMOTE_THREAD_INDEX].origstub_fn)(
                   hProcess, lpThreadAttributes, dwStackSize, lpStartAddress, lpParameter, dwCreationFlags, lpThreadId);
+                  
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    RecordHandleCreation(result, HANDLE_TYPE_THREAD, "CreateRemoteThread");
+  }
                   
   HANDLE_TRACE(true,
     std::cout << "CreateRemoteThread returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
@@ -891,6 +1129,12 @@ HANDLE WINAPI Perftools_CreateFileA(
                   handle_function_info_[CREATE_FILE_A_INDEX].origstub_fn)(
                   lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
                   
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    std::string name(lpFileName ? lpFileName : "");
+    RecordHandleCreation(result, HANDLE_TYPE_FILE, name);
+  }
+                  
   HANDLE_TRACE(true,
     std::cout << "CreateFileA returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
   );
@@ -916,6 +1160,13 @@ HANDLE WINAPI Perftools_CreateFileW(
                   handle_function_info_[CREATE_FILE_W_INDEX].origstub_fn)(
                   lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
                   
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    std::wstring wname(lpFileName ? lpFileName : L"");
+    std::string name(wname.begin(), wname.end());
+    RecordHandleCreation(result, HANDLE_TYPE_FILE, name);
+  }
+                  
   HANDLE_TRACE(true,
     std::cout << "CreateFileW returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
   );
@@ -940,6 +1191,12 @@ HANDLE WINAPI Perftools_CreateFileMappingA(
                   handle_function_info_[CREATE_FILE_MAPPING_A_INDEX].origstub_fn)(
                   hFile, lpFileMappingAttributes, flProtect, dwMaximumSizeHigh, dwMaximumSizeLow, lpName);
                   
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    std::string name(lpName ? lpName : "");
+    RecordHandleCreation(result, HANDLE_TYPE_FILE, name);
+  }
+                  
   HANDLE_TRACE(true,
     std::cout << "CreateFileMappingA returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
   );
@@ -963,6 +1220,13 @@ HANDLE WINAPI Perftools_CreateFileMappingW(
   HANDLE result = ((HANDLE (WINAPI *)(HANDLE, LPSECURITY_ATTRIBUTES, DWORD, DWORD, DWORD, LPCWSTR))
                   handle_function_info_[CREATE_FILE_MAPPING_W_INDEX].origstub_fn)(
                   hFile, lpFileMappingAttributes, flProtect, dwMaximumSizeHigh, dwMaximumSizeLow, lpName);
+                  
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    std::wstring wname(lpName ? lpName : L"");
+    std::string name(wname.begin(), wname.end());
+    RecordHandleCreation(result, HANDLE_TYPE_FILE, name);
+  }
                   
   HANDLE_TRACE(true,
     std::cout << "CreateFileMappingW returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
@@ -990,6 +1254,12 @@ HANDLE WINAPI Perftools_CreateFileMappingNumaA(
                   handle_function_info_[CREATE_FILE_MAPPING_NUMA_A_INDEX].origstub_fn)(
                   hFile, lpFileMappingAttributes, flProtect, dwMaximumSizeHigh, dwMaximumSizeLow, lpName, nndPreferred);
                   
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    std::string name(lpName ? lpName : "");
+    RecordHandleCreation(result, HANDLE_TYPE_FILE, name);
+  }
+                  
   HANDLE_TRACE(true,
     std::cout << "CreateFileMappingNumaA returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
   );
@@ -1016,6 +1286,13 @@ HANDLE WINAPI Perftools_CreateFileMappingNumaW(
                   handle_function_info_[CREATE_FILE_MAPPING_NUMA_W_INDEX].origstub_fn)(
                   hFile, lpFileMappingAttributes, flProtect, dwMaximumSizeHigh, dwMaximumSizeLow, lpName, nndPreferred);
                   
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    std::wstring wname(lpName ? lpName : L"");
+    std::string name(wname.begin(), wname.end());
+    RecordHandleCreation(result, HANDLE_TYPE_FILE, name);
+  }
+                  
   HANDLE_TRACE(true,
     std::cout << "CreateFileMappingNumaW returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
   );
@@ -1035,6 +1312,14 @@ BOOL WINAPI Perftools_CreatePipe(
   BOOL result = ((BOOL (WINAPI *)(PHANDLE, PHANDLE, LPSECURITY_ATTRIBUTES, DWORD))
                 handle_function_info_[CREATE_PIPE_INDEX].origstub_fn)(
                 hReadPipe, hWritePipe, lpPipeAttributes, nSize);
+  
+  // Record the handle creation for both pipes
+  if (result && hReadPipe && *hReadPipe != INVALID_HANDLE_VALUE) {
+    RecordHandleCreation(*hReadPipe, HANDLE_TYPE_PIPE, "ReadPipe");
+  }
+  if (result && hWritePipe && *hWritePipe != INVALID_HANDLE_VALUE) {
+    RecordHandleCreation(*hWritePipe, HANDLE_TYPE_PIPE, "WritePipe");
+  }
   
   HANDLE_TRACE(true,
     std::cout << "CreatePipe returned " << result << std::endl;
@@ -1063,6 +1348,12 @@ HANDLE WINAPI Perftools_CreateNamedPipeA(
                   handle_function_info_[CREATE_NAMED_PIPE_A_INDEX].origstub_fn)(
                   lpName, dwOpenMode, dwPipeMode, nMaxInstances, nOutBufferSize, nInBufferSize, nDefaultTimeOut, lpSecurityAttributes);
                   
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    std::string name(lpName ? lpName : "");
+    RecordHandleCreation(result, HANDLE_TYPE_PIPE, name);
+  }
+                  
   HANDLE_TRACE(true,
     std::cout << "CreateNamedPipeA returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
   );
@@ -1090,6 +1381,13 @@ HANDLE WINAPI Perftools_CreateNamedPipeW(
                   handle_function_info_[CREATE_NAMED_PIPE_W_INDEX].origstub_fn)(
                   lpName, dwOpenMode, dwPipeMode, nMaxInstances, nOutBufferSize, nInBufferSize, nDefaultTimeOut, lpSecurityAttributes);
                   
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    std::wstring wname(lpName ? lpName : L"");
+    std::string name(wname.begin(), wname.end());
+    RecordHandleCreation(result, HANDLE_TYPE_PIPE, name);
+  }
+                  
   HANDLE_TRACE(true,
     std::cout << "CreateNamedPipeW returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
   );
@@ -1110,6 +1408,11 @@ HANDLE WINAPI Perftools_HeapCreate(
                   handle_function_info_[HEAP_CREATE_INDEX].origstub_fn)(
                   flOptions, dwInitialSize, dwMaximumSize);
                   
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    RecordHandleCreation(result, HANDLE_TYPE_HEAP, "Heap");
+  }
+                  
   HANDLE_TRACE(true,
     std::cout << "HeapCreate returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
   );
@@ -1128,6 +1431,12 @@ HANDLE WINAPI Perftools_CreateJobObjectA(
                   handle_function_info_[CREATE_JOB_OBJECT_A_INDEX].origstub_fn)(
                   lpJobAttributes, lpName);
                   
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    std::string name(lpName ? lpName : "");
+    RecordHandleCreation(result, HANDLE_TYPE_JOB, name);
+  }
+                  
   HANDLE_TRACE(true,
     std::cout << "CreateJobObjectA returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
   );
@@ -1145,6 +1454,13 @@ HANDLE WINAPI Perftools_CreateJobObjectW(
   HANDLE result = ((HANDLE (WINAPI *)(LPSECURITY_ATTRIBUTES, LPCWSTR))
                   handle_function_info_[CREATE_JOB_OBJECT_W_INDEX].origstub_fn)(
                   lpJobAttributes, lpName);
+                  
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    std::wstring wname(lpName ? lpName : L"");
+    std::string name(wname.begin(), wname.end());
+    RecordHandleCreation(result, HANDLE_TYPE_JOB, name);
+  }
                   
   HANDLE_TRACE(true,
       std::cout << "CreateJobObjectW returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
@@ -1168,6 +1484,11 @@ HANDLE WINAPI Perftools_CreateConsoleScreenBuffer(
                   handle_function_info_[CREATE_CONSOLE_SCREEN_BUFFER_INDEX].origstub_fn)(
                   dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwFlags, lpScreenBufferData);
                   
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    RecordHandleCreation(result, HANDLE_TYPE_CONSOLE, "ConsoleScreenBuffer");
+  }
+                  
   HANDLE_TRACE(true,
     std::cout << "CreateConsoleScreenBuffer returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
   );
@@ -1184,6 +1505,11 @@ HANDLE WINAPI Perftools_CreateMemoryResourceNotification(
   HANDLE result = ((HANDLE (WINAPI *)(MEMORY_RESOURCE_NOTIFICATION_TYPE))
                   handle_function_info_[CREATE_MEMORY_RESOURCE_NOTIFICATION_INDEX].origstub_fn)(
                   NotificationType);
+                  
+  // Record the handle creation
+  if (result != nullptr && result != INVALID_HANDLE_VALUE) {
+    RecordHandleCreation(result, HANDLE_TYPE_MEMORY_RESOURCE, "MemoryResourceNotification");
+  }
                   
   HANDLE_TRACE(true,
       std::cout << "CreateMemoryResourceNotification returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
@@ -1205,6 +1531,11 @@ PTP_TIMER WINAPI Perftools_CreateThreadpoolTimer(
                   handle_function_info_[CREATE_THREADPOOL_TIMER_INDEX].origstub_fn)(
                   pfnti, pv, pcbe);
                   
+  // Record the handle creation
+  if (result != nullptr) {
+    RecordHandleCreation((HANDLE)result, HANDLE_TYPE_THREADPOOL_TIMER, "ThreadpoolTimer");
+  }
+                  
   HANDLE_TRACE(true,
     std::cout << "CreateThreadpoolTimer returned " << result << std::endl;
   );
@@ -1224,6 +1555,11 @@ PTP_WAIT WINAPI Perftools_CreateThreadpoolWait(
   PTP_WAIT result = ((PTP_WAIT (WINAPI *)(PTP_WAIT_CALLBACK, PVOID, PTP_CALLBACK_ENVIRON))
                   handle_function_info_[CREATE_THREADPOOL_WAIT_INDEX].origstub_fn)(
                   pfnwa, pv, pcbe);
+                  
+  // Record the handle creation
+  if (result != nullptr) {
+    RecordHandleCreation((HANDLE)result, HANDLE_TYPE_THREADPOOL_WAIT, "ThreadpoolWait");
+  }
                   
   HANDLE_TRACE(true,
     std::cout << "CreateThreadpoolWait returned " << result << std::endl;
@@ -1246,6 +1582,11 @@ PTP_IO WINAPI Perftools_CreateThreadpoolIo(
                   handle_function_info_[CREATE_THREADPOOL_IO_INDEX].origstub_fn)(
                   fl, pfnio, pv, pcbe);
                   
+  // Record the handle creation
+  if (result != nullptr) {
+    RecordHandleCreation((HANDLE)result, HANDLE_TYPE_THREADPOOL_IO, "ThreadpoolIo");
+  }
+                  
   HANDLE_TRACE(true,
     std::cout << "CreateThreadpoolIo returned " << result << std::endl;
   );
@@ -1266,6 +1607,11 @@ PTP_WORK WINAPI Perftools_CreateThreadpoolWork(
                   handle_function_info_[CREATE_THREADPOOL_WORK_INDEX].origstub_fn)(
                   pfnWorkCallback, pv, pcbe);
                   
+  // Record the handle creation
+  if (result != nullptr) {
+    RecordHandleCreation((HANDLE)result, HANDLE_TYPE_THREADPOOL_WORK, "ThreadpoolWork");
+  }
+                  
   HANDLE_TRACE(true,
     std::cout << "CreateThreadpoolWork returned " << result << std::endl;
   );
@@ -1276,7 +1622,23 @@ PTP_WORK WINAPI Perftools_CreateThreadpoolWork(
 BOOL WINAPI Perftools_CloseHandle(HANDLE hObject) {
   HANDLE_TRACE(true,
     std::cout << "CloseHandle called with hObject=" << reinterpret_cast<uintptr_t>(hObject) << std::endl;
+    
+    // Print existing handle info before closing
+    EnterCriticalSection(&handle_map_lock);
+    auto it = handle_map.find(hObject);
+    if (it != handle_map.end()) {
+      std::cout << "  Found handle info - type: " << it->second.type 
+                << " name: " << it->second.name 
+                << " creation time: " << it->second.creation_time << std::endl;
+      PrintStackTrace(it->second.stack_trace, it->second.stack_depth);
+    } else {
+      std::cout << "  No handle info found" << std::endl;
+    }
+    LeaveCriticalSection(&handle_map_lock);
   );
+  
+  // Record handle destruction before calling the original function
+  RecordHandleDestruction(hObject);
   
   BOOL result = ((BOOL (WINAPI *)(HANDLE))
                 handle_function_info_[CLOSE_HANDLE_INDEX].origstub_fn)(
