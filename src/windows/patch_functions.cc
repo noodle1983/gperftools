@@ -589,7 +589,6 @@ void LibcInfoWithPatchFunctions<T>::Unpatch() {
 }
 
 void WindowsInfo::Patch() {
-  ::PatchHandleFunctions();
   HMODULE hkernel32 = ::GetModuleHandleA("kernel32");
   CHECK_NE(hkernel32, nullptr);
 
@@ -624,7 +623,6 @@ void WindowsInfo::Patch() {
 }
 
 void WindowsInfo::Unpatch() {
-  ::UnpatchHandleFunctions();
   // Begin Detours transaction
   DetourTransactionBegin();
   DetourUpdateThread(GetCurrentThread());

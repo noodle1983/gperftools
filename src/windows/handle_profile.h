@@ -44,6 +44,7 @@
 
 #include <windows.h>
 #include <iostream>
+#include <sstream>
 #include <cstdint>
 #include <map>
 #include <string>
@@ -130,7 +131,7 @@ struct HandleInfo {
 // Global map to store handle information
 std::map<HANDLE, HandleInfo> handle_map;
 CRITICAL_SECTION handle_map_lock;
-bool handle_tracking_enabled = false;
+std::atomic<bool> handle_tracking_enabled = false;
 
 // Helper functions for handle tracking
 void InitializeHandleTracking() {
@@ -138,6 +139,11 @@ void InitializeHandleTracking() {
     InitializeCriticalSection(&handle_map_lock);
     handle_tracking_enabled = true;
   }
+}
+
+PERFTOOLS_DLL_DECL 
+bool IsHandleTracking() {
+	return handle_tracking_enabled;
 }
 
 void CleanupHandleTracking() {
@@ -148,6 +154,13 @@ void CleanupHandleTracking() {
     DeleteCriticalSection(&handle_map_lock);
     handle_tracking_enabled = false;
   }
+}
+
+std::string GetHandlesInfo()
+{
+    std::stringstream stream;
+
+    return stream.str();
 }
 
 // Function to print stack trace for debugging
@@ -528,7 +541,7 @@ HandleFunctionInfo handle_function_info_[] = {
 };
 
 // Handle patching functions using Detours
-void PatchHandleFunctions() {
+PERFTOOLS_DLL_DECL void PatchHandleFunctions() {
   // Initialize handle tracking
   InitializeHandleTracking();
   
@@ -581,6 +594,7 @@ void PatchHandleFunctions() {
   }
 }
 
+PERFTOOLS_DLL_DECL 
 void UnpatchHandleFunctions() {
   // Begin Detours transaction
   DetourTransactionBegin();
@@ -603,6 +617,8 @@ void UnpatchHandleFunctions() {
   
   // Commit Detours transaction
   DetourTransactionCommit();
+
+  CleanupHandleTracking();
 }
 
 // Handle function hook implementations with default behavior
