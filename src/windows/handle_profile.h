@@ -55,7 +55,20 @@
 // This is the same basename that is used in the tcmalloc library.
 #define PERFTOOLS_DLL_DECL __declspec(dllexport)
 
-const bool kEnableHandleTrace = true;
+// Define a macro for handle tracing that can be enabled/disabled at compile time
+#ifdef ENABLE_HANDLE_TRACING
+#define HANDLE_TRACE_ENABLED 1
+#else
+#define HANDLE_TRACE_ENABLED 0
+#endif
+
+// Macro for conditional tracing
+#define HANDLE_TRACE(condition, stmt) \
+    do { \
+        if (HANDLE_TRACE_ENABLED && (condition)) { \
+            stmt; \
+        } \
+    } while (0)
 
 // This module is linked into tcmalloc, so it should use Windows
 // native exception handling and not C++ exceptions.
@@ -416,26 +429,32 @@ void PatchHandleFunctions() {
     }
     
     // Use Detours to patch the function
-    // Save the original function pointer BEFORE calling DetourAttach
-    handle_function_info_[i].origstub_fn = handle_function_info_[i].windows_fn;
-    LONG result = DetourAttach(&(PVOID&)handle_function_info_[i].origstub_fn,
+    LONG result = DetourAttach(&(PVOID&)handle_function_info_[i].windows_fn,
                               (PVOID)handle_function_info_[i].perftools_fn);
     
     if (result != NO_ERROR) {
-      std::cout << "Failed to patch " << handle_function_info_[i].name 
-                << " with error code: " << result << std::endl;
-      // Reset origstub_fn on failure
-      handle_function_info_[i].origstub_fn = nullptr;
+      HANDLE_TRACE(true,
+        std::cout << "Failed to patch " << handle_function_info_[i].name 
+                  << " with error code: " << result << std::endl;
+      );
     } else {
-      if (kEnableHandleTrace) {
+      HANDLE_TRACE(true,
         std::cout << "Successfully patched " << handle_function_info_[i].name << std::endl;
-      }
-      // origstub_fn already set before DetourAttach call
+      );
     }
   }
   
   // Commit Detours transaction
   DetourTransactionCommit();
+  
+  // NOW save the original function pointers after commit
+  // Only after DetourTransactionCommit() do we have the correct trampoline addresses
+  for (int i = 0; i < MAX_HANDLE_FUNCTIONS; i++) {
+    if (handle_function_info_[i].windows_fn && handle_function_info_[i].perftools_fn) {
+      // The windows_fn now points to the trampoline, so we need to save the original
+      handle_function_info_[i].origstub_fn = handle_function_info_[i].windows_fn;
+    }
+  }
 }
 
 void UnpatchHandleFunctions() {
@@ -450,8 +469,10 @@ void UnpatchHandleFunctions() {
                                 (PVOID)handle_function_info_[i].perftools_fn);
       
       if (result != NO_ERROR) {
-        std::cout << "Failed to unpatch " << handle_function_info_[i].name 
-                  << " with error code: " << result << std::endl;
+        HANDLE_TRACE(true,
+          std::cout << "Failed to unpatch " << handle_function_info_[i].name 
+                    << " with error code: " << result << std::endl;
+        );
       }
     }
   }
@@ -466,10 +487,10 @@ HANDLE WINAPI Perftools_CreateEventA(
     _In_ BOOL bManualReset,
     _In_ BOOL bInitialState,
     _In_opt_ LPCSTR lpName) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true, 
     std::cout << "CreateEventA called with lpName=" << (lpName ? lpName : "NULL") 
               << ", bManualReset=" << bManualReset << ", bInitialState=" << bInitialState << std::endl;
-  }
+  );
   
   // Safety check to ensure origstub_fn is valid before calling
   if (handle_function_info_[CREATE_EVENT_A_INDEX].origstub_fn == nullptr) {
@@ -481,9 +502,9 @@ HANDLE WINAPI Perftools_CreateEventA(
                   handle_function_info_[CREATE_EVENT_A_INDEX].origstub_fn)(
                   lpEventAttributes, bManualReset, bInitialState, lpName);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateEventA returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
@@ -493,18 +514,18 @@ HANDLE WINAPI Perftools_CreateEventW(
     _In_ BOOL bManualReset,
     _In_ BOOL bInitialState,
     _In_opt_ LPCWSTR lpName) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::wcout << L"CreateEventW called with lpName=" << (lpName ? lpName : L"NULL")
                << L", bManualReset=" << bManualReset << L", bInitialState=" << bInitialState << std::endl;
-  }
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(LPSECURITY_ATTRIBUTES, BOOL, BOOL, LPCWSTR))
                   handle_function_info_[CREATE_EVENT_W_INDEX].origstub_fn)(
                   lpEventAttributes, bManualReset, bInitialState, lpName);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateEventW returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
@@ -514,18 +535,18 @@ HANDLE WINAPI Perftools_CreateEventExA(
     _In_opt_ LPCSTR lpName,
     _In_ DWORD dwFlags,
     _In_ DWORD dwDesiredAccess) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateEventExA called with lpName=" << (lpName ? lpName : "NULL")
               << ", dwFlags=" << dwFlags << ", dwDesiredAccess=" << dwDesiredAccess << std::endl;
-  }
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(LPSECURITY_ATTRIBUTES, LPCSTR, DWORD, DWORD))
                   handle_function_info_[CREATE_EVENT_EX_A_INDEX].origstub_fn)(
                   lpEventAttributes, lpName, dwFlags, dwDesiredAccess);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateEventExA returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
@@ -535,18 +556,18 @@ HANDLE WINAPI Perftools_CreateEventExW(
     _In_opt_ LPCWSTR lpName,
     _In_ DWORD dwFlags,
     _In_ DWORD dwDesiredAccess) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::wcout << L"CreateEventExW called with lpName=" << (lpName ? lpName : L"NULL")
                << L", dwFlags=" << dwFlags << L", dwDesiredAccess=" << dwDesiredAccess << std::endl;
-  }
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(LPSECURITY_ATTRIBUTES, LPCWSTR, DWORD, DWORD))
                   handle_function_info_[CREATE_EVENT_EX_W_INDEX].origstub_fn)(
                   lpEventAttributes, lpName, dwFlags, dwDesiredAccess);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateEventExW returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
@@ -555,18 +576,18 @@ HANDLE WINAPI Perftools_CreateMutexA(
     _In_opt_ LPSECURITY_ATTRIBUTES lpMutexAttributes,
     _In_ BOOL bInitialOwner,
     _In_opt_ LPCSTR lpName) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateMutexA called with lpName=" << (lpName ? lpName : "NULL")
               << ", bInitialOwner=" << bInitialOwner << std::endl;
-  }
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(LPSECURITY_ATTRIBUTES, BOOL, LPCSTR))
                   handle_function_info_[CREATE_MUTEX_A_INDEX].origstub_fn)(
                   lpMutexAttributes, bInitialOwner, lpName);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateMutexA returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
@@ -575,18 +596,18 @@ HANDLE WINAPI Perftools_CreateMutexW(
     _In_opt_ LPSECURITY_ATTRIBUTES lpMutexAttributes,
     _In_ BOOL bInitialOwner,
     _In_opt_ LPCWSTR lpName) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::wcout << L"CreateMutexW called with lpName=" << (lpName ? lpName : L"NULL")
                << L", bInitialOwner=" << bInitialOwner << std::endl;
-  }
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(LPSECURITY_ATTRIBUTES, BOOL, LPCWSTR))
                   handle_function_info_[CREATE_MUTEX_W_INDEX].origstub_fn)(
                   lpMutexAttributes, bInitialOwner, lpName);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateMutexW returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
@@ -596,18 +617,18 @@ HANDLE WINAPI Perftools_CreateMutexExA(
     _In_opt_ LPCSTR lpName,
     _In_ DWORD dwFlags,
     _In_ DWORD dwDesiredAccess) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateMutexExA called with lpName=" << (lpName ? lpName : "NULL")
               << ", dwFlags=" << dwFlags << ", dwDesiredAccess=" << dwDesiredAccess << std::endl;
-  }
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(LPSECURITY_ATTRIBUTES, LPCSTR, DWORD, DWORD))
                   handle_function_info_[CREATE_MUTEX_EX_A_INDEX].origstub_fn)(
                   lpMutexAttributes, lpName, dwFlags, dwDesiredAccess);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateMutexExA returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
@@ -617,18 +638,18 @@ HANDLE WINAPI Perftools_CreateMutexExW(
     _In_opt_ LPCWSTR lpName,
     _In_ DWORD dwFlags,
     _In_ DWORD dwDesiredAccess) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::wcout << L"CreateMutexExW called with lpName=" << (lpName ? lpName : L"NULL")
                << L", dwFlags=" << dwFlags << L", dwDesiredAccess=" << dwDesiredAccess << std::endl;
-  }
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(LPSECURITY_ATTRIBUTES, LPCWSTR, DWORD, DWORD))
                   handle_function_info_[CREATE_MUTEX_EX_W_INDEX].origstub_fn)(
                   lpMutexAttributes, lpName, dwFlags, dwDesiredAccess);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateMutexExW returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
@@ -638,18 +659,18 @@ HANDLE WINAPI Perftools_CreateSemaphoreA(
     _In_ LONG lInitialCount,
     _In_ LONG lMaximumCount,
     _In_opt_ LPCSTR lpName) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateSemaphoreA called with lpName=" << (lpName ? lpName : "NULL")
               << ", lInitialCount=" << lInitialCount << ", lMaximumCount=" << lMaximumCount << std::endl;
-  }
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(LPSECURITY_ATTRIBUTES, LONG, LONG, LPCSTR))
                   handle_function_info_[CREATE_SEMAPHORE_A_INDEX].origstub_fn)(
                   lpSemaphoreAttributes, lInitialCount, lMaximumCount, lpName);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateSemaphoreA returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
@@ -659,18 +680,18 @@ HANDLE WINAPI Perftools_CreateSemaphoreW(
     _In_ LONG lInitialCount,
     _In_ LONG lMaximumCount,
     _In_opt_ LPCWSTR lpName) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::wcout << L"CreateSemaphoreW called with lpName=" << (lpName ? lpName : L"NULL")
                << L", lInitialCount=" << lInitialCount << L", lMaximumCount=" << lMaximumCount << std::endl;
-  }
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(LPSECURITY_ATTRIBUTES, LONG, LONG, LPCWSTR))
                   handle_function_info_[CREATE_SEMAPHORE_W_INDEX].origstub_fn)(
                   lpSemaphoreAttributes, lInitialCount, lMaximumCount, lpName);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateSemaphoreW returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
@@ -682,19 +703,19 @@ HANDLE WINAPI Perftools_CreateSemaphoreExA(
     _In_opt_ LPCSTR lpName,
     _In_ DWORD dwFlags,
     _In_ DWORD dwDesiredAccess) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateSemaphoreExA called with lpName=" << (lpName ? lpName : "NULL")
               << ", lInitialCount=" << lInitialCount << ", lMaximumCount=" << lMaximumCount
               << ", dwFlags=" << dwFlags << ", dwDesiredAccess=" << dwDesiredAccess << std::endl;
-  }
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(LPSECURITY_ATTRIBUTES, LONG, LONG, LPCSTR, DWORD, DWORD))
                   handle_function_info_[CREATE_SEMAPHORE_EX_A_INDEX].origstub_fn)(
                   lpSemaphoreAttributes, lInitialCount, lMaximumCount, lpName, dwFlags, dwDesiredAccess);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateSemaphoreExA returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
@@ -706,19 +727,19 @@ HANDLE WINAPI Perftools_CreateSemaphoreExW(
     _In_opt_ LPCWSTR lpName,
     _In_ DWORD dwFlags,
     _In_ DWORD dwDesiredAccess) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::wcout << L"CreateSemaphoreExW called with lpName=" << (lpName ? lpName : L"NULL")
                << L", lInitialCount=" << lInitialCount << L", lMaximumCount=" << lMaximumCount
                << L", dwFlags=" << dwFlags << L", dwDesiredAccess=" << dwDesiredAccess << std::endl;
-  }
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(LPSECURITY_ATTRIBUTES, LONG, LONG, LPCWSTR, DWORD, DWORD))
                   handle_function_info_[CREATE_SEMAPHORE_EX_W_INDEX].origstub_fn)(
                   lpSemaphoreAttributes, lInitialCount, lMaximumCount, lpName, dwFlags, dwDesiredAccess);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateSemaphoreExW returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
@@ -727,18 +748,18 @@ HANDLE WINAPI Perftools_CreateWaitableTimerA(
     _In_opt_ LPSECURITY_ATTRIBUTES lpTimerAttributes,
     _In_ BOOL bManualReset,
     _In_opt_ LPCSTR lpTimerName) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateWaitableTimerA called with lpTimerName=" << (lpTimerName ? lpTimerName : "NULL")
               << ", bManualReset=" << bManualReset << std::endl;
-  }
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(LPSECURITY_ATTRIBUTES, BOOL, LPCSTR))
                   handle_function_info_[CREATE_WAITABLE_TIMER_A_INDEX].origstub_fn)(
                   lpTimerAttributes, bManualReset, lpTimerName);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateWaitableTimerA returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
@@ -747,18 +768,18 @@ HANDLE WINAPI Perftools_CreateWaitableTimerW(
     _In_opt_ LPSECURITY_ATTRIBUTES lpTimerAttributes,
     _In_ BOOL bManualReset,
     _In_opt_ LPCWSTR lpTimerName) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::wcout << L"CreateWaitableTimerW called with lpTimerName=" << (lpTimerName ? lpTimerName : L"NULL")
                << L", bManualReset=" << bManualReset << std::endl;
-  }
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(LPSECURITY_ATTRIBUTES, BOOL, LPCWSTR))
                   handle_function_info_[CREATE_WAITABLE_TIMER_W_INDEX].origstub_fn)(
                   lpTimerAttributes, bManualReset, lpTimerName);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateWaitableTimerW returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
@@ -768,18 +789,18 @@ HANDLE WINAPI Perftools_CreateWaitableTimerExA(
     _In_opt_ LPCSTR lpTimerName,
     _In_ DWORD dwFlags,
     _In_ DWORD dwDesiredAccess) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateWaitableTimerExA called with lpTimerName=" << (lpTimerName ? lpTimerName : "NULL")
               << ", dwFlags=" << dwFlags << ", dwDesiredAccess=" << dwDesiredAccess << std::endl;
-  }
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(LPSECURITY_ATTRIBUTES, LPCSTR, DWORD, DWORD))
                   handle_function_info_[CREATE_WAITABLE_TIMER_EX_A_INDEX].origstub_fn)(
                   lpTimerAttributes, lpTimerName, dwFlags, dwDesiredAccess);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateWaitableTimerExA returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
@@ -789,18 +810,18 @@ HANDLE WINAPI Perftools_CreateWaitableTimerExW(
     _In_opt_ LPCWSTR lpTimerName,
     _In_ DWORD dwFlags,
     _In_ DWORD dwDesiredAccess) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::wcout << L"CreateWaitableTimerExW called with lpTimerName=" << (lpTimerName ? lpTimerName : L"NULL")
                << L", dwFlags=" << dwFlags << L", dwDesiredAccess=" << dwDesiredAccess << std::endl;
-  }
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(LPSECURITY_ATTRIBUTES, LPCWSTR, DWORD, DWORD))
                   handle_function_info_[CREATE_WAITABLE_TIMER_EX_W_INDEX].origstub_fn)(
                   lpTimerAttributes, lpTimerName, dwFlags, dwDesiredAccess);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateWaitableTimerExW returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
@@ -812,18 +833,18 @@ HANDLE WINAPI Perftools_CreateThread(
     _In_opt_ LPVOID lpParameter,
     _In_ DWORD dwCreationFlags,
     _Out_opt_ LPDWORD lpThreadId) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateThread called with dwStackSize=" << dwStackSize
-              << ", lpStartAddress=" << lpStartAddress << ", dwCreationFlags=" << dwCreationFlags << std::endl;
-  }
+              << ", dwCreationFlags=" << dwCreationFlags << std::endl;
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(LPSECURITY_ATTRIBUTES, SIZE_T, LPTHREAD_START_ROUTINE, LPVOID, DWORD, LPDWORD))
                   handle_function_info_[CREATE_THREAD_INDEX].origstub_fn)(
                   lpThreadAttributes, dwStackSize, lpStartAddress, lpParameter, dwCreationFlags, lpThreadId);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateThread returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
@@ -836,18 +857,18 @@ HANDLE WINAPI Perftools_CreateRemoteThread(
     _In_opt_ LPVOID lpParameter,
     _In_ DWORD dwCreationFlags,
     _Out_opt_ LPDWORD lpThreadId) {
-  if (kEnableHandleTrace) {
-    std::cout << "CreateRemoteThread called with hProcess=" << reinterpret_cast<uintptr_t>(hProcess) << ", dwStackSize=" << dwStackSize
-              << ", lpStartAddress=" << lpStartAddress << ", dwCreationFlags=" << dwCreationFlags << std::endl;
-  }
+  HANDLE_TRACE(true,
+    std::cout << "CreateRemoteThread called with hProcess=" << reinterpret_cast<uintptr_t>(hProcess)
+              << ", dwStackSize=" << dwStackSize << ", dwCreationFlags=" << dwCreationFlags << std::endl;
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(HANDLE, LPSECURITY_ATTRIBUTES, SIZE_T, LPTHREAD_START_ROUTINE, LPVOID, DWORD, LPDWORD))
                   handle_function_info_[CREATE_REMOTE_THREAD_INDEX].origstub_fn)(
                   hProcess, lpThreadAttributes, dwStackSize, lpStartAddress, lpParameter, dwCreationFlags, lpThreadId);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateRemoteThread returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
@@ -860,21 +881,19 @@ HANDLE WINAPI Perftools_CreateFileA(
     _In_ DWORD dwCreationDisposition,
     _In_ DWORD dwFlagsAndAttributes,
     _In_opt_ HANDLE hTemplateFile) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateFileA called with lpFileName=" << (lpFileName ? lpFileName : "NULL")
               << ", dwDesiredAccess=" << dwDesiredAccess << ", dwShareMode=" << dwShareMode
-              << ", dwCreationDisposition=" << dwCreationDisposition 
-              << ", dwFlagsAndAttributes=" << dwFlagsAndAttributes << std::endl;
-  }
+              << ", dwCreationDisposition=" << dwCreationDisposition << ", dwFlagsAndAttributes=" << dwFlagsAndAttributes << std::endl;
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(LPCSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE))
                   handle_function_info_[CREATE_FILE_A_INDEX].origstub_fn)(
-                  lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, 
-                  dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+                  lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateFileA returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
@@ -887,21 +906,19 @@ HANDLE WINAPI Perftools_CreateFileW(
     _In_ DWORD dwCreationDisposition,
     _In_ DWORD dwFlagsAndAttributes,
     _In_opt_ HANDLE hTemplateFile) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::wcout << L"CreateFileW called with lpFileName=" << (lpFileName ? lpFileName : L"NULL")
                << L", dwDesiredAccess=" << dwDesiredAccess << L", dwShareMode=" << dwShareMode
-               << L", dwCreationDisposition=" << dwCreationDisposition
-               << L", dwFlagsAndAttributes=" << dwFlagsAndAttributes << std::endl;
-  }
+               << L", dwCreationDisposition=" << dwCreationDisposition << L", dwFlagsAndAttributes=" << dwFlagsAndAttributes << std::endl;
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(LPCWSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE))
                   handle_function_info_[CREATE_FILE_W_INDEX].origstub_fn)(
-                  lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes,
-                  dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+                  lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateFileW returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
@@ -913,19 +930,19 @@ HANDLE WINAPI Perftools_CreateFileMappingA(
     _In_ DWORD dwMaximumSizeHigh,
     _In_ DWORD dwMaximumSizeLow,
     _In_opt_ LPCSTR lpName) {
-  if (kEnableHandleTrace) {
-    std::cout << "CreateFileMappingA called with hFile=" << reinterpret_cast<uintptr_t>(hFile) << ", lpName=" << (lpName ? lpName : "NULL")
+  HANDLE_TRACE(true,
+    std::cout << "CreateFileMappingA called with hFile=" << reinterpret_cast<uintptr_t>(hFile)
               << ", flProtect=" << flProtect << ", dwMaximumSizeHigh=" << dwMaximumSizeHigh
-              << ", dwMaximumSizeLow=" << dwMaximumSizeLow << std::endl;
-  }
+              << ", dwMaximumSizeLow=" << dwMaximumSizeLow << ", lpName=" << (lpName ? lpName : "NULL") << std::endl;
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(HANDLE, LPSECURITY_ATTRIBUTES, DWORD, DWORD, DWORD, LPCSTR))
                   handle_function_info_[CREATE_FILE_MAPPING_A_INDEX].origstub_fn)(
                   hFile, lpFileMappingAttributes, flProtect, dwMaximumSizeHigh, dwMaximumSizeLow, lpName);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateFileMappingA returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
@@ -937,19 +954,19 @@ HANDLE WINAPI Perftools_CreateFileMappingW(
     _In_ DWORD dwMaximumSizeHigh,
     _In_ DWORD dwMaximumSizeLow,
     _In_opt_ LPCWSTR lpName) {
-  if (kEnableHandleTrace) {
-    std::wcout << L"CreateFileMappingW called with hFile=" << reinterpret_cast<uintptr_t>(hFile) << L", lpName=" << (lpName ? lpName : L"NULL")
+  HANDLE_TRACE(true,
+    std::wcout << L"CreateFileMappingW called with hFile=" << reinterpret_cast<uintptr_t>(hFile)
                << L", flProtect=" << flProtect << L", dwMaximumSizeHigh=" << dwMaximumSizeHigh
-               << L", dwMaximumSizeLow=" << dwMaximumSizeLow << std::endl;
-  }
+               << L", dwMaximumSizeLow=" << dwMaximumSizeLow << L", lpName=" << (lpName ? lpName : L"NULL") << std::endl;
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(HANDLE, LPSECURITY_ATTRIBUTES, DWORD, DWORD, DWORD, LPCWSTR))
                   handle_function_info_[CREATE_FILE_MAPPING_W_INDEX].origstub_fn)(
                   hFile, lpFileMappingAttributes, flProtect, dwMaximumSizeHigh, dwMaximumSizeLow, lpName);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateFileMappingW returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
@@ -962,19 +979,20 @@ HANDLE WINAPI Perftools_CreateFileMappingNumaA(
     _In_ DWORD dwMaximumSizeLow,
     _In_opt_ LPCSTR lpName,
     _In_ DWORD nndPreferred) {
-  if (kEnableHandleTrace) {
-    std::cout << "CreateFileMappingNumaA called with hFile=" << reinterpret_cast<uintptr_t>(hFile) << ", lpName=" << (lpName ? lpName : "NULL")
+  HANDLE_TRACE(true,
+    std::cout << "CreateFileMappingNumaA called with hFile=" << reinterpret_cast<uintptr_t>(hFile)
               << ", flProtect=" << flProtect << ", dwMaximumSizeHigh=" << dwMaximumSizeHigh
-              << ", dwMaximumSizeLow=" << dwMaximumSizeLow << ", nndPreferred=" << nndPreferred << std::endl;
-  }
+              << ", dwMaximumSizeLow=" << dwMaximumSizeLow << ", lpName=" << (lpName ? lpName : "NULL")
+              << ", nndPreferred=" << nndPreferred << std::endl;
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(HANDLE, LPSECURITY_ATTRIBUTES, DWORD, DWORD, DWORD, LPCSTR, DWORD))
                   handle_function_info_[CREATE_FILE_MAPPING_NUMA_A_INDEX].origstub_fn)(
                   hFile, lpFileMappingAttributes, flProtect, dwMaximumSizeHigh, dwMaximumSizeLow, lpName, nndPreferred);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateFileMappingNumaA returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
@@ -987,19 +1005,20 @@ HANDLE WINAPI Perftools_CreateFileMappingNumaW(
     _In_ DWORD dwMaximumSizeLow,
     _In_opt_ LPCWSTR lpName,
     _In_ DWORD nndPreferred) {
-  if (kEnableHandleTrace) {
-    std::wcout << L"CreateFileMappingNumaW called with hFile=" << reinterpret_cast<uintptr_t>(hFile) << L", lpName=" << (lpName ? lpName : L"NULL")
+  HANDLE_TRACE(true,
+    std::wcout << L"CreateFileMappingNumaW called with hFile=" << reinterpret_cast<uintptr_t>(hFile)
                << L", flProtect=" << flProtect << L", dwMaximumSizeHigh=" << dwMaximumSizeHigh
-               << L", dwMaximumSizeLow=" << dwMaximumSizeLow << L", nndPreferred=" << nndPreferred << std::endl;
-  }
+               << L", dwMaximumSizeLow=" << dwMaximumSizeLow << L", lpName=" << (lpName ? lpName : L"NULL")
+               << L", nndPreferred=" << nndPreferred << std::endl;
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(HANDLE, LPSECURITY_ATTRIBUTES, DWORD, DWORD, DWORD, LPCWSTR, DWORD))
                   handle_function_info_[CREATE_FILE_MAPPING_NUMA_W_INDEX].origstub_fn)(
                   hFile, lpFileMappingAttributes, flProtect, dwMaximumSizeHigh, dwMaximumSizeLow, lpName, nndPreferred);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateFileMappingNumaW returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
@@ -1009,19 +1028,17 @@ BOOL WINAPI Perftools_CreatePipe(
     _Out_ PHANDLE hWritePipe,
     _In_opt_ LPSECURITY_ATTRIBUTES lpPipeAttributes,
     _In_ DWORD nSize) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreatePipe called with nSize=" << nSize << std::endl;
-  }
+  );
   
   BOOL result = ((BOOL (WINAPI *)(PHANDLE, PHANDLE, LPSECURITY_ATTRIBUTES, DWORD))
                 handle_function_info_[CREATE_PIPE_INDEX].origstub_fn)(
                 hReadPipe, hWritePipe, lpPipeAttributes, nSize);
-                
-  if (kEnableHandleTrace) {
-    std::cout << "CreatePipe returned " << result 
-              << ", hReadPipe=" << (hReadPipe ? reinterpret_cast<uintptr_t>(*hReadPipe) : 0) 
-              << ", hWritePipe=" << (hWritePipe ? reinterpret_cast<uintptr_t>(*hWritePipe) : 0) << std::endl;
-  }
+  
+  HANDLE_TRACE(true,
+    std::cout << "CreatePipe returned " << result << std::endl;
+  );
   
   return result;
 }
@@ -1035,21 +1052,20 @@ HANDLE WINAPI Perftools_CreateNamedPipeA(
     _In_ DWORD nInBufferSize,
     _In_ DWORD nDefaultTimeOut,
     _In_opt_ LPSECURITY_ATTRIBUTES lpSecurityAttributes) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateNamedPipeA called with lpName=" << (lpName ? lpName : "NULL")
               << ", dwOpenMode=" << dwOpenMode << ", dwPipeMode=" << dwPipeMode
               << ", nMaxInstances=" << nMaxInstances << ", nOutBufferSize=" << nOutBufferSize
               << ", nInBufferSize=" << nInBufferSize << ", nDefaultTimeOut=" << nDefaultTimeOut << std::endl;
-  }
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(LPCSTR, DWORD, DWORD, DWORD, DWORD, DWORD, DWORD, LPSECURITY_ATTRIBUTES))
                   handle_function_info_[CREATE_NAMED_PIPE_A_INDEX].origstub_fn)(
-                  lpName, dwOpenMode, dwPipeMode, nMaxInstances, nOutBufferSize, 
-                  nInBufferSize, nDefaultTimeOut, lpSecurityAttributes);
+                  lpName, dwOpenMode, dwPipeMode, nMaxInstances, nOutBufferSize, nInBufferSize, nDefaultTimeOut, lpSecurityAttributes);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateNamedPipeA returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
@@ -1063,21 +1079,20 @@ HANDLE WINAPI Perftools_CreateNamedPipeW(
     _In_ DWORD nInBufferSize,
     _In_ DWORD nDefaultTimeOut,
     _In_opt_ LPSECURITY_ATTRIBUTES lpSecurityAttributes) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::wcout << L"CreateNamedPipeW called with lpName=" << (lpName ? lpName : L"NULL")
                << L", dwOpenMode=" << dwOpenMode << L", dwPipeMode=" << dwPipeMode
                << L", nMaxInstances=" << nMaxInstances << L", nOutBufferSize=" << nOutBufferSize
                << L", nInBufferSize=" << nInBufferSize << L", nDefaultTimeOut=" << nDefaultTimeOut << std::endl;
-  }
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(LPCWSTR, DWORD, DWORD, DWORD, DWORD, DWORD, DWORD, LPSECURITY_ATTRIBUTES))
                   handle_function_info_[CREATE_NAMED_PIPE_W_INDEX].origstub_fn)(
-                  lpName, dwOpenMode, dwPipeMode, nMaxInstances, nOutBufferSize,
-                  nInBufferSize, nDefaultTimeOut, lpSecurityAttributes);
+                  lpName, dwOpenMode, dwPipeMode, nMaxInstances, nOutBufferSize, nInBufferSize, nDefaultTimeOut, lpSecurityAttributes);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateNamedPipeW returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
@@ -1086,18 +1101,18 @@ HANDLE WINAPI Perftools_HeapCreate(
     _In_ DWORD flOptions,
     _In_ SIZE_T dwInitialSize,
     _In_ SIZE_T dwMaximumSize) {
-  if (kEnableHandleTrace) {
-    std::cout << "HeapCreate called with flOptions=" << flOptions 
+  HANDLE_TRACE(true,
+    std::cout << "HeapCreate called with flOptions=" << flOptions
               << ", dwInitialSize=" << dwInitialSize << ", dwMaximumSize=" << dwMaximumSize << std::endl;
-  }
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(DWORD, SIZE_T, SIZE_T))
                   handle_function_info_[HEAP_CREATE_INDEX].origstub_fn)(
                   flOptions, dwInitialSize, dwMaximumSize);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "HeapCreate returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
@@ -1105,17 +1120,17 @@ HANDLE WINAPI Perftools_HeapCreate(
 HANDLE WINAPI Perftools_CreateJobObjectA(
     _In_opt_ LPSECURITY_ATTRIBUTES lpJobAttributes,
     _In_opt_ LPCSTR lpName) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateJobObjectA called with lpName=" << (lpName ? lpName : "NULL") << std::endl;
-  }
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(LPSECURITY_ATTRIBUTES, LPCSTR))
                   handle_function_info_[CREATE_JOB_OBJECT_A_INDEX].origstub_fn)(
                   lpJobAttributes, lpName);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateJobObjectA returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
@@ -1123,17 +1138,17 @@ HANDLE WINAPI Perftools_CreateJobObjectA(
 HANDLE WINAPI Perftools_CreateJobObjectW(
     _In_opt_ LPSECURITY_ATTRIBUTES lpJobAttributes,
     _In_opt_ LPCWSTR lpName) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::wcout << L"CreateJobObjectW called with lpName=" << (lpName ? lpName : L"NULL") << std::endl;
-  }
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(LPSECURITY_ATTRIBUTES, LPCWSTR))
                   handle_function_info_[CREATE_JOB_OBJECT_W_INDEX].origstub_fn)(
                   lpJobAttributes, lpName);
                   
-  if (kEnableHandleTrace) {
-    std::cout << "CreateJobObjectW returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  HANDLE_TRACE(true,
+      std::cout << "CreateJobObjectW returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
+  );
   
   return result;
 }
@@ -1141,38 +1156,38 @@ HANDLE WINAPI Perftools_CreateJobObjectW(
 HANDLE WINAPI Perftools_CreateConsoleScreenBuffer(
     _In_ DWORD dwDesiredAccess,
     _In_ DWORD dwShareMode,
-    _In_opt_ const LPSECURITY_ATTRIBUTES lpSecurityAttributes,
+    _In_opt_ LPSECURITY_ATTRIBUTES lpSecurityAttributes,
     _In_ DWORD dwFlags,
-    _Reserved_ LPVOID lpScreenBufferData) {
-  if (kEnableHandleTrace) {
+    _In_opt_ LPVOID lpScreenBufferData) {
+  HANDLE_TRACE(true,
     std::cout << "CreateConsoleScreenBuffer called with dwDesiredAccess=" << dwDesiredAccess
               << ", dwShareMode=" << dwShareMode << ", dwFlags=" << dwFlags << std::endl;
-  }
+  );
   
-  HANDLE result = ((HANDLE (WINAPI *)(DWORD, DWORD, const LPSECURITY_ATTRIBUTES, DWORD, LPVOID))
+  HANDLE result = ((HANDLE (WINAPI *)(DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, LPVOID))
                   handle_function_info_[CREATE_CONSOLE_SCREEN_BUFFER_INDEX].origstub_fn)(
                   dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwFlags, lpScreenBufferData);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateConsoleScreenBuffer returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  );
   
   return result;
 }
 
 HANDLE WINAPI Perftools_CreateMemoryResourceNotification(
     _In_ MEMORY_RESOURCE_NOTIFICATION_TYPE NotificationType) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateMemoryResourceNotification called with NotificationType=" << NotificationType << std::endl;
-  }
+  );
   
   HANDLE result = ((HANDLE (WINAPI *)(MEMORY_RESOURCE_NOTIFICATION_TYPE))
                   handle_function_info_[CREATE_MEMORY_RESOURCE_NOTIFICATION_INDEX].origstub_fn)(
                   NotificationType);
                   
-  if (kEnableHandleTrace) {
-    std::cout << "CreateMemoryResourceNotification returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
-  }
+  HANDLE_TRACE(true,
+      std::cout << "CreateMemoryResourceNotification returned " << reinterpret_cast<uintptr_t>(result) << std::endl;
+  );
   
   return result;
 }
@@ -1181,18 +1196,18 @@ PTP_TIMER WINAPI Perftools_CreateThreadpoolTimer(
     _In_ PTP_TIMER_CALLBACK pfnti,
     _Inout_opt_ PVOID pv,
     _In_opt_ PTP_CALLBACK_ENVIRON pcbe) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateThreadpoolTimer called with pfnti=" << pfnti
               << ", pv=" << pv << std::endl;
-  }
+  );
   
   PTP_TIMER result = ((PTP_TIMER (WINAPI *)(PTP_TIMER_CALLBACK, PVOID, PTP_CALLBACK_ENVIRON))
                   handle_function_info_[CREATE_THREADPOOL_TIMER_INDEX].origstub_fn)(
                   pfnti, pv, pcbe);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateThreadpoolTimer returned " << result << std::endl;
-  }
+  );
   
   return result;
 }
@@ -1201,18 +1216,18 @@ PTP_WAIT WINAPI Perftools_CreateThreadpoolWait(
     _In_ PTP_WAIT_CALLBACK pfnwa,
     _Inout_opt_ PVOID pv,
     _In_opt_ PTP_CALLBACK_ENVIRON pcbe) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateThreadpoolWait called with pfnWaitCallback=" << pfnwa
               << ", pv=" << pv << std::endl;
-  }
+  );
   
   PTP_WAIT result = ((PTP_WAIT (WINAPI *)(PTP_WAIT_CALLBACK, PVOID, PTP_CALLBACK_ENVIRON))
                   handle_function_info_[CREATE_THREADPOOL_WAIT_INDEX].origstub_fn)(
                   pfnwa, pv, pcbe);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateThreadpoolWait returned " << result << std::endl;
-  }
+  );
   
   return result;
 }
@@ -1222,18 +1237,18 @@ PTP_IO WINAPI Perftools_CreateThreadpoolIo(
     _In_ PTP_WIN32_IO_CALLBACK pfnio,
     _Inout_opt_ PVOID pv,
     _In_opt_ PTP_CALLBACK_ENVIRON pcbe) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateThreadpoolIo called with fl=" << reinterpret_cast<uintptr_t>(fl) << ", pfnio=" << pfnio
               << ", pv=" << pv << std::endl;
-  }
+  );
   
   PTP_IO result = ((PTP_IO (WINAPI *)(HANDLE, PTP_WIN32_IO_CALLBACK, PVOID, PTP_CALLBACK_ENVIRON))
                   handle_function_info_[CREATE_THREADPOOL_IO_INDEX].origstub_fn)(
                   fl, pfnio, pv, pcbe);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateThreadpoolIo returned " << result << std::endl;
-  }
+  );
   
   return result;
 }
@@ -1242,30 +1257,34 @@ PTP_WORK WINAPI Perftools_CreateThreadpoolWork(
     PTP_WORK_CALLBACK pfnWorkCallback,
     PVOID pv,
     PTP_CALLBACK_ENVIRON pcbe) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateThreadpoolWork called with pfnWorkCallback=" << pfnWorkCallback
               << ", pv=" << pv << std::endl;
-  }
+  );
   
   PTP_WORK result = ((PTP_WORK (WINAPI *)(PTP_WORK_CALLBACK, PVOID, PTP_CALLBACK_ENVIRON))
                   handle_function_info_[CREATE_THREADPOOL_WORK_INDEX].origstub_fn)(
                   pfnWorkCallback, pv, pcbe);
                   
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CreateThreadpoolWork returned " << result << std::endl;
-  }
+  );
   
   return result;
 }
 
 BOOL WINAPI Perftools_CloseHandle(HANDLE hObject) {
-  if (kEnableHandleTrace) {
+  HANDLE_TRACE(true,
     std::cout << "CloseHandle called with hObject=" << reinterpret_cast<uintptr_t>(hObject) << std::endl;
-  }
+  );
   
   BOOL result = ((BOOL (WINAPI *)(HANDLE))
                 handle_function_info_[CLOSE_HANDLE_INDEX].origstub_fn)(
                 hObject);
+  
+  HANDLE_TRACE(true,
+    std::cout << "CloseHandle returned " << result << std::endl;
+  );
   
   return result;
 }
