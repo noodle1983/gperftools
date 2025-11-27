@@ -427,6 +427,14 @@ target_sources(common PRIVATE
 set(SYSTEM_ALLOC_CC src/windows/system-alloc.cc)
 set(TCMALLOC_CC src/windows/patch_functions.cc)
 
+# Add Detours library support
+# Include Detours headers
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/detours_x64-windows/include)
+
+# Link Detours library
+link_directories(${CMAKE_CURRENT_SOURCE_DIR}/detours_x64-windows/lib)
+link_libraries(detours)
+
 # patch_function uses -lpsapi and spinlock bits use -synchronization
 # and -lshlwapi
 link_libraries(psapi synchronization shlwapi)

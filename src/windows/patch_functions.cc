@@ -595,36 +595,56 @@ void WindowsInfo::Patch() {
 
   // Unlike for libc, we know these exist in our module, so we can get
   // and patch at the same time.
+  // Begin Detours transaction
+  DetourTransactionBegin();
+  DetourUpdateThread(GetCurrentThread());
+
   for (int i = 0; i < kNumFunctions; i++) {
     function_info_[i].windows_fn = (GenericFnPtr)
         ::GetProcAddress(hkernel32, function_info_[i].name);
-    // If origstub_fn is not nullptr, it's left around from a previous
-    // patch.  We need to set it to nullptr for the new Patch call.
-    // Since we've patched Unpatch() not to delete origstub_fn_ (it
-    // causes problems in some contexts, though obviously not this
-    // one), we should delete it now, before setting it to nullptr.
-    // NOTE: casting from a function to a pointer is contra the C++
-    //       spec.  It's not safe on IA64, but is on i386.  We use
-    //       a C-style cast here to emphasize this is not legal C++.
-    delete[] (char*)(function_info_[i].origstub_fn);
-    function_info_[i].origstub_fn = nullptr;  // Patch() will fill this in
-    CHECK_EQ(sidestep::SIDESTEP_SUCCESS,
-             PreamblePatcher::Patch(function_info_[i].windows_fn,
-                                    function_info_[i].perftools_fn,
-                                    &function_info_[i].origstub_fn));
+    // Save the original function pointer BEFORE calling DetourAttach
+    function_info_[i].origstub_fn = function_info_[i].windows_fn;
+    
+    // Use Detours to patch the function
+    LONG result = DetourAttach(&(PVOID&)function_info_[i].origstub_fn,
+                              (PVOID)function_info_[i].perftools_fn);
+    
+    if (result != NO_ERROR) {
+      std::cout << "Failed to patch " << function_info_[i].name 
+                << " with error code: " << result << std::endl;
+      // Reset origstub_fn on failure
+      function_info_[i].origstub_fn = nullptr;
+    } else {
+      // origstub_fn already set before DetourAttach call
+    }
   }
+  
+  // Commit Detours transaction
+  DetourTransactionCommit();
 }
 
 void WindowsInfo::Unpatch() {
   ::UnpatchHandleFunctions();
+  // Begin Detours transaction
+  DetourTransactionBegin();
+  DetourUpdateThread(GetCurrentThread());
+
   // We have to cast our GenericFnPtrs to void* for unpatch.  This is
   // contra the C++ spec; we use C-style casts to empahsize that.
   for (int i = 0; i < kNumFunctions; i++) {
-    CHECK_EQ(sidestep::SIDESTEP_SUCCESS,
-             PreamblePatcher::Unpatch((void*)function_info_[i].windows_fn,
-                                      (void*)function_info_[i].perftools_fn,
-                                      (void*)function_info_[i].origstub_fn));
+    if (function_info_[i].windows_fn && function_info_[i].perftools_fn) {
+      LONG result = DetourDetach(&(PVOID&)function_info_[i].windows_fn,
+                                (PVOID)function_info_[i].perftools_fn);
+      
+      if (result != NO_ERROR) {
+        std::cout << "Failed to unpatch " << function_info_[i].name 
+                  << " with error code: " << result << std::endl;
+      }
+    }
   }
+  
+  // Commit Detours transaction
+  DetourTransactionCommit();
 }
 
 // You should hold the patch_all_modules_lock when calling this.
@@ -715,7 +735,7 @@ bool PatchAllModules() {
   // At the same time, we prepare for the adding of new modules, by
   // removing from hModules all the modules we know we've already
   // patched (or decided don't need to be patched).  At the end,
-  // hModules will hold only the modules that we need to consider patching.
+  // hModules will just the ones we haven't handled yet.
   std::set<HMODULE> currently_loaded_modules;
   {
     SpinLockHolder h(&patch_all_modules_lock);
