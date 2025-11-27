@@ -49,6 +49,7 @@
 #include <map>
 #include <string>
 #include <ctime>
+#include <atomic>
 
 // Forward declarations for Detours functions to avoid include issues
 extern "C" {
@@ -131,7 +132,20 @@ struct HandleInfo {
 // Global map to store handle information
 std::map<HANDLE, HandleInfo> handle_map;
 CRITICAL_SECTION handle_map_lock;
-std::atomic<bool> handle_tracking_enabled = false;
+std::atomic<bool> handle_tracking_enabled{false};
+
+// Atomic flags for thread safety and reentrancy of PatchHandleFunctions and UnpatchHandleFunctions
+std::atomic<bool> handle_functions_patched{false};
+std::atomic<bool> handle_functions_unpatched{false};
+static CRITICAL_SECTION patch_lock;
+static std::atomic<bool> patch_lock_initialized{false};
+
+// Helper function to initialize patch lock
+void InitializePatchLock() {
+  if (!patch_lock_initialized.exchange(true)) {
+    InitializeCriticalSection(&patch_lock);
+  }
+}
 
 // Helper functions for handle tracking
 void InitializeHandleTracking() {
@@ -151,8 +165,18 @@ void CleanupHandleTracking() {
     EnterCriticalSection(&handle_map_lock);
     handle_map.clear();
     LeaveCriticalSection(&handle_map_lock);
-    DeleteCriticalSection(&handle_map_lock);
+    // Don't delete the critical section to allow re-patching
+    // DeleteCriticalSection(&handle_map_lock);
     handle_tracking_enabled = false;
+  }
+}
+
+// Helper function to reinitialize handle tracking for repatching
+void ReinitializeHandleTracking() {
+  if (!handle_tracking_enabled) {
+    // Don't reinitialize the critical section as it's already initialized
+    // Just enable tracking again
+    handle_tracking_enabled = true;
   }
 }
 
@@ -542,11 +566,33 @@ HandleFunctionInfo handle_function_info_[] = {
 
 // Handle patching functions using Detours
 PERFTOOLS_DLL_DECL void PatchHandleFunctions() {
-  // Initialize handle tracking
-  InitializeHandleTracking();
+  // Initialize patch lock if not already done
+  InitializePatchLock();
+  
+  EnterCriticalSection(&patch_lock);
+  
+  // Check if already patched to ensure reentrancy
+  // If unpatched before, we allow re-patching
+  if (handle_functions_patched.load() && !handle_functions_unpatched.load()) {
+    LeaveCriticalSection(&patch_lock);
+    return; // Already patched and not unpatched, nothing to do
+  }
+  
+  // Reset the unpatched flag if we're repatching
+  handle_functions_unpatched.store(false);
+  
+  // Initialize or reinitialize handle tracking
+  if (handle_functions_patched.load()) {
+    // If we've patched before, reinitialize tracking instead of initial initialization
+    ReinitializeHandleTracking();
+  } else {
+    // First time patching
+    InitializeHandleTracking();
+  }
   
   HMODULE kernel32_module = ::GetModuleHandleA("kernel32.dll");
   if (kernel32_module == nullptr) {
+    LeaveCriticalSection(&patch_lock);
     return;
   }
 
@@ -592,10 +638,26 @@ PERFTOOLS_DLL_DECL void PatchHandleFunctions() {
       handle_function_info_[i].origstub_fn = handle_function_info_[i].windows_fn;
     }
   }
+  
+  // Mark as patched
+  handle_functions_patched.store(true);
+  
+  LeaveCriticalSection(&patch_lock);
 }
 
 PERFTOOLS_DLL_DECL 
 void UnpatchHandleFunctions() {
+  // Initialize patch lock if not already done
+  InitializePatchLock();
+  
+  EnterCriticalSection(&patch_lock);
+  
+  // Check if already unpatched to ensure reentrancy
+  if (handle_functions_unpatched.load()) {
+    LeaveCriticalSection(&patch_lock);
+    return; // Already unpatched, nothing to do
+  }
+  
   // Begin Detours transaction
   DetourTransactionBegin();
   DetourUpdateThread(GetCurrentThread());
@@ -618,7 +680,10 @@ void UnpatchHandleFunctions() {
   // Commit Detours transaction
   DetourTransactionCommit();
 
-  CleanupHandleTracking();
+  // Mark as unpatched
+  handle_functions_unpatched.store(true);
+  
+  LeaveCriticalSection(&patch_lock);
 }
 
 // Handle function hook implementations with default behavior
