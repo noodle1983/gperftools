@@ -41,6 +41,13 @@ int file_exists(const char* filename) {
 	return 0;
 }
 
+PERFTOOLS_DLL_DECL void get_meminfo(char* buffer, size_t len)
+{
+	char buf[512] = { 0 };
+	MallocExtension::instance()->GetStats(buf, sizeof(buf) - 1);
+	snprintf(buffer, len - 1, "profile enabled:%d, Heap Stat: %s\n", (int)enabled, buf);
+}
+
 PERFTOOLS_DLL_DECL size_t set_profile(bool is_enable, const char* start_profile_size)
 {
 	if (!is_enable) {
