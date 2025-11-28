@@ -48,6 +48,8 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <vector>
+#include <algorithm>
 #include <ctime>
 #include <atomic>
 
@@ -180,11 +182,106 @@ void ReinitializeHandleTracking() {
   }
 }
 
-std::string GetHandlesInfo()
-{
-    std::stringstream stream;
+// Function to convert HandleType to string
+std::string HandleTypeToString(HandleType type) {
+  switch (type) {
+    case HANDLE_TYPE_EVENT: return "EVENT";
+    case HANDLE_TYPE_THREAD: return "THREAD";
+    case HANDLE_TYPE_FILE: return "FILE";
+    case HANDLE_TYPE_MUTEX: return "MUTEX";
+    case HANDLE_TYPE_SEMAPHORE: return "SEMAPHORE";
+    case HANDLE_TYPE_TIMER: return "TIMER";
+    case HANDLE_TYPE_JOB: return "JOB";
+    case HANDLE_TYPE_PIPE: return "PIPE";
+    case HANDLE_TYPE_HEAP: return "HEAP";
+    case HANDLE_TYPE_CONSOLE: return "CONSOLE";
+    case HANDLE_TYPE_MEMORY_RESOURCE: return "MEMORY_RESOURCE";
+    case HANDLE_TYPE_THREADPOOL_TIMER: return "THREADPOOL_TIMER";
+    case HANDLE_TYPE_THREADPOOL_WAIT: return "THREADPOOL_WAIT";
+    case HANDLE_TYPE_THREADPOOL_IO: return "THREADPOOL_IO";
+    case HANDLE_TYPE_THREADPOOL_WORK: return "THREADPOOL_WORK";
+    default: return "UNKNOWN";
+  }
+}
 
-    return stream.str();
+// Function to format stack trace as string
+std::string FormatStackTrace(void* const* stack_trace, int depth) {
+  if (depth <= 0) {
+    return "";
+  }
+  
+  std::stringstream stream;
+  for (int i = 0; i < depth && i < 32; i++) {
+    if (i > 0) {
+      stream << " ";
+    }
+    stream << "0x" << std::hex << reinterpret_cast<uintptr_t>(stack_trace[i]) << std::dec;
+  }
+  return stream.str();
+}
+
+// Function to format time as string
+std::string FormatTime(time_t time_val) {
+  struct tm time_info;
+  localtime_s(&time_info, &time_val);
+  char buffer[20];
+  strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &time_info);
+  return std::string(buffer);
+}
+
+PERFTOOLS_DLL_DECL 
+void GetHandlesInfo(char* buf, size_t len)
+{
+  if (!handle_tracking_enabled) {
+      snprintf(buf, len - 1, "[]");
+      return;
+  }
+  
+  // Create a vector of handle info for sorting
+  std::vector<std::pair<HANDLE, HandleInfo>> handle_list;
+  
+  // Copy data under lock protection
+  EnterCriticalSection(&handle_map_lock);
+  for (const auto& entry : handle_map) {
+    handle_list.push_back(entry);
+  }
+  LeaveCriticalSection(&handle_map_lock);
+  
+  // Sort by creation time (ascending)
+  std::sort(handle_list.begin(), handle_list.end(), 
+            [](const std::pair<HANDLE, HandleInfo>& a, const std::pair<HANDLE, HandleInfo>& b) {
+              return a.second.creation_time < b.second.creation_time;
+            });
+  
+  // Build JSON string (no locking needed here)
+  std::stringstream stream;
+  stream << "[";
+  
+  for (size_t i = 0; i < handle_list.size(); ++i) {
+	std::stringstream handle_stream;
+    if (i > 0) {
+      handle_stream << ",";
+    }
+    
+    const HandleInfo& info = handle_list[i].second;
+    
+    handle_stream << "{\"handle\":\"0x" << std::hex << reinterpret_cast<uintptr_t>(info.handle) << std::dec << "\",";
+    handle_stream << "\"type\":\"" << HandleTypeToString(info.type) << "\",";
+    handle_stream << "\"name\":\"" << info.name << "\",";
+    handle_stream << "\"create_time\":\"" << FormatTime(info.creation_time) << "\",";
+    handle_stream << "\"stack\":\"" << FormatStackTrace(info.stack_trace, info.stack_depth) << "\"";
+    handle_stream << "}";
+
+    if (stream.str().length() + handle_stream.str().length() > len - 1) {
+        break;
+    }
+    stream << handle_stream.str();
+  }
+  
+  stream << "]";
+  
+  snprintf(buf, len - 1, "%s", stream.str().c_str());
+  return;
 }
 
 // Function to print stack trace for debugging
@@ -684,6 +781,8 @@ void UnpatchHandleFunctions() {
   handle_functions_unpatched.store(true);
   
   LeaveCriticalSection(&patch_lock);
+
+  CleanupHandleTracking();
 }
 
 // Handle function hook implementations with default behavior
@@ -1701,6 +1800,7 @@ PTP_WORK WINAPI Perftools_CreateThreadpoolWork(
 }
 
 BOOL WINAPI Perftools_CloseHandle(HANDLE hObject) {
+  // Only lock for the debug output section if tracing is enabled
   HANDLE_TRACE(true,
     std::cout << "CloseHandle called with hObject=" << reinterpret_cast<uintptr_t>(hObject) << std::endl;
     
@@ -1711,11 +1811,19 @@ BOOL WINAPI Perftools_CloseHandle(HANDLE hObject) {
       std::cout << "  Found handle info - type: " << it->second.type 
                 << " name: " << it->second.name 
                 << " creation time: " << it->second.creation_time << std::endl;
-      PrintStackTrace(it->second.stack_trace, it->second.stack_depth);
+      // We need to copy the stack trace data since PrintStackTrace is outside the critical section
+      void* stack_copy[32];
+      int stack_depth = std::min(it->second.stack_depth, 32);
+      for (int i = 0; i < stack_depth; i++) {
+        stack_copy[i] = it->second.stack_trace[i];
+      }
+      LeaveCriticalSection(&handle_map_lock);
+      
+      PrintStackTrace(stack_copy, stack_depth);
     } else {
+      LeaveCriticalSection(&handle_map_lock);
       std::cout << "  No handle info found" << std::endl;
     }
-    LeaveCriticalSection(&handle_map_lock);
   );
   
   // Record handle destruction before calling the original function
