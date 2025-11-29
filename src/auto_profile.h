@@ -3,7 +3,9 @@
 
 #include <gperftools/malloc_extension.h>
 #include "base/spinlock.h"
+#include "base/generic_writer.h"
 #include "gperftools/heap-profiler.h"
+#include "base/proc_maps_iterator.h"
 
 #include <atomic>
 #include <fstream>
@@ -46,6 +48,16 @@ PERFTOOLS_DLL_DECL void get_meminfo(char* buffer, size_t len)
 	char buf[512] = { 0 };
 	MallocExtension::instance()->GetStats(buf, sizeof(buf) - 1);
 	snprintf(buffer, len - 1, "profile enabled:%d, Heap Stat: %s\n", (int)enabled, buf);
+}
+
+PERFTOOLS_DLL_DECL void get_memmap(char* buffer, size_t len)
+{
+  std::string s;
+  {
+    tcmalloc::StringGenericWriter writer(&s);
+    tcmalloc::SaveProcSelfMaps(&writer);
+  }
+  snprintf(buffer, len - 1, "MAPPED_LIBRARIES:\n%s", s.c_str());
 }
 
 PERFTOOLS_DLL_DECL size_t set_profile(bool is_enable, const char* start_profile_size)
