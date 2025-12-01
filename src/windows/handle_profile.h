@@ -110,6 +110,15 @@ enum HandleType {
   HANDLE_TYPE_UNKNOWN
 };
 
+std::string& replaceAll(std::string& str, const std::string& oldStr, const std::string& newStr) {
+	size_t pos = 0;
+	while ((pos = str.find(oldStr, pos)) != std::string::npos) {
+		str.replace(pos, oldStr.length(), newStr);
+		pos += newStr.length();
+	}
+    return str;
+}
+
 // Structure to store handle information
 struct HandleInfo {
   HANDLE handle;
@@ -125,6 +134,7 @@ struct HandleInfo {
   
   HandleInfo(HANDLE h, HandleType t, const std::string& n = "") 
     : handle(h), type(t), creation_time(time(nullptr)), stack_depth(0), name(n) {
+    replaceAll(name, "\\", "\\\\");
     memset(stack_trace, 0, sizeof(stack_trace));
     // Capture stack trace, skipping this function and the caller (2 frames)
     stack_depth = GetStackTrace(stack_trace, 32, 2);
