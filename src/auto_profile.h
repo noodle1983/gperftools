@@ -10,6 +10,7 @@
 #include <atomic>
 #include <fstream>
 #include <stdio.h>
+#include <sstream>
 
 static std::atomic<bool> is_inited = false;
 static std::atomic<bool> enabled = true;
@@ -184,5 +185,20 @@ void check_start_profile()
 		HeapProfilerStart(fname);
 	}
 }
+
+PERFTOOLS_DLL_DECL void get_stack_backtrace(char* buff, int len)
+{
+  static constexpr int kDepth = 32;
+  void* stack[kDepth];
+  char buf[128] = { 0 };
+  int depth = tcmalloc::GrabBacktrace(stack, kDepth, 1);
+  std::stringstream out;
+  out << "back trace:";
+  for (int i = 0; i < depth; i++) {
+	  out << " 0x" << std::hex << (intptr_t)stack[i];
+  }
+  snprintf(buff, len, "%s", out.str().c_str());
+}
+
 
 #endif /* AUTO_PROFILE_H */
