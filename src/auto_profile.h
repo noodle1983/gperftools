@@ -211,7 +211,7 @@ PERFTOOLS_DLL_DECL void get_stack_backtrace(char* buff, int len)
   static constexpr int kDepth = 32;
   void* stack[kDepth];
   char buf[128] = { 0 };
-  int depth = tcmalloc::GrabBacktrace(stack, kDepth, 1);
+  int depth = tcmalloc::GrabBacktrace(stack, kDepth, 0);
   std::stringstream out;
   out << "back trace:";
   for (int i = 0; i < depth; i++) {
