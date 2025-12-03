@@ -6,6 +6,8 @@
 #include "base/generic_writer.h"
 #include "gperftools/heap-profiler.h"
 #include "base/proc_maps_iterator.h"
+#define THIS_IS_MALLOC_BACKTRACE_CC
+#include "malloc_backtrace.h"
 
 #include <atomic>
 #include <fstream>
