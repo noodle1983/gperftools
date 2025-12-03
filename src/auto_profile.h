@@ -61,6 +61,26 @@ PERFTOOLS_DLL_DECL void get_memmap(char* buffer, size_t len)
   snprintf(buffer, len - 1, "MAPPED_LIBRARIES:\n%s", s.c_str());
 }
 
+PERFTOOLS_DLL_DECL void dump_memmap(const char* path)
+{
+	char filename[128] = { 0 };
+	if (path) {
+		snprintf(filename, sizeof(filename), "%s", path);
+	}
+	else {
+		snprintf(filename, sizeof(filename), "memmap_%d.map", getpid());
+	}
+
+	char content[4096 * 10] = { 0 };
+	get_memmap(content, sizeof(content) - 1);
+
+	std::ofstream of(filename);
+	if (of.is_open()) {
+		of << content << std::endl;
+		of.close();
+	}
+}
+
 PERFTOOLS_DLL_DECL size_t set_profile(bool is_enable, const char* start_profile_size)
 {
 	if (!is_enable) {
