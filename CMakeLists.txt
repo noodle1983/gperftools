@@ -510,7 +510,7 @@ set(MINIMAL_MALLOC_SRC
   src/malloc_hook.cc
   src/malloc_extension.cc)
 
-add_library(tcmalloc_minimal ${TCMALLOC_CC} ${MINIMAL_MALLOC_SRC})
+add_library(tcmalloc_minimal ${TCMALLOC_CC} ${MINIMAL_MALLOC_SRC} src/heap-profiler-stub.cc)
 if(gperftools_enable_broken_install_targets)
   install(TARGETS tcmalloc_minimal)
 endif()
@@ -596,7 +596,7 @@ if(BUILD_TESTING)
 
   # page heap test is somewhat special it compiles and links entirety
   # of tcmalloc statically. We'll eventually make it right.
-  add_executable(page_heap_test src/tests/page_heap_test.cc ${TCMALLOC_CC} ${MINIMAL_MALLOC_SRC})
+  add_executable(page_heap_test src/tests/page_heap_test.cc ${TCMALLOC_CC} ${MINIMAL_MALLOC_SRC} src/heap-profiler-stub.cc)
   target_compile_definitions(page_heap_test PRIVATE NO_TCMALLOC_SAMPLES PERFTOOLS_DLL_DECL= )
   target_link_libraries(page_heap_test common gtest)
   add_test(page_heap_test page_heap_test)
@@ -692,22 +692,22 @@ if(GPERFTOOLS_BUILD_DEBUGALLOC)
   ### Unittests
 
   if(BUILD_TESTING)
-    add_executable(tcmalloc_minimal_debug_unittest src/tests/tcmalloc_unittest.cc src/tests/testutil.cc)
+    add_executable(tcmalloc_minimal_debug_unittest src/tests/tcmalloc_unittest.cc src/tests/testutil.cc src/heap-profiler-stub.cc)
     target_link_libraries(tcmalloc_minimal_debug_unittest tcmalloc_minimal_debug gtest)
     add_test(tcmalloc_minimal_debug_unittest tcmalloc_minimal_debug_unittest)
 
-    add_executable(malloc_extension_debug_test src/tests/malloc_extension_test.cc)
+    add_executable(malloc_extension_debug_test src/tests/malloc_extension_test.cc src/heap-profiler-stub.cc)
     target_link_libraries(malloc_extension_debug_test tcmalloc_minimal_debug gtest)
     add_test(malloc_extension_debug_test malloc_extension_debug_test)
 
     if(NOT MINGW AND NOT APPLE)
-      add_executable(memalign_debug_unittest src/tests/memalign_unittest.cc src/tests/testutil.cc)
+      add_executable(memalign_debug_unittest src/tests/memalign_unittest.cc src/tests/testutil.cc src/heap-profiler-stub.cc)
       target_link_libraries(memalign_debug_unittest
               tcmalloc_minimal_debug gtest)
       add_test(memalign_debug_unittest memalign_debug_unittest)
     endif()
 
-    add_executable(realloc_debug_unittest src/tests/realloc_unittest.cc)
+    add_executable(realloc_debug_unittest src/tests/realloc_unittest.cc  src/heap-profiler-stub.cc)
     target_link_libraries(realloc_debug_unittest PUBLIC tcmalloc_minimal_debug gtest)
     add_test(realloc_debug_unittest realloc_debug_unittest)
 

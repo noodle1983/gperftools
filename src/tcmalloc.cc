@@ -139,6 +139,7 @@
 #undef small
 
 #include "libc_override.h"
+#include "auto_profile.h"
 
 using tcmalloc::kLog;
 using tcmalloc::kCrash;
@@ -1962,6 +1963,7 @@ static void* memalign_fast_path(size_t align, size_t size) {
 
 extern "C" PERFTOOLS_DLL_DECL CACHELINE_ALIGNED_FN
 void* tc_malloc(size_t size) PERFTOOLS_NOTHROW {
+  check_start_profile();
   return malloc_fast_path<tcmalloc::malloc_oom>(size);
 }
 
@@ -2062,11 +2064,13 @@ extern "C" PERFTOOLS_DLL_DECL void* tc_realloc(void* old_ptr,
 
 extern "C" PERFTOOLS_DLL_DECL CACHELINE_ALIGNED_FN
 void* tc_new(size_t size) {
+  check_start_profile();
   return malloc_fast_path<tcmalloc::cpp_throw_oom>(size);
 }
 
 extern "C" PERFTOOLS_DLL_DECL CACHELINE_ALIGNED_FN
 void* tc_new_nothrow(size_t size, const std::nothrow_t&) PERFTOOLS_NOTHROW {
+  check_start_profile();
   return malloc_fast_path<tcmalloc::cpp_nothrow_oom>(size);
 }
 
@@ -2096,6 +2100,7 @@ extern "C" PERFTOOLS_DLL_DECL void* tc_newarray(size_t size)
 TC_ALIAS(tc_new);
 #else
 {
+  check_start_profile();
   return malloc_fast_path<tcmalloc::cpp_throw_oom>(size);
 }
 #endif
@@ -2106,6 +2111,7 @@ extern "C" PERFTOOLS_DLL_DECL void* tc_newarray_nothrow(size_t size, const std::
 TC_ALIAS(tc_new_nothrow);
 #else
 {
+  check_start_profile();
   return malloc_fast_path<tcmalloc::cpp_nothrow_oom>(size);
 }
 #endif
