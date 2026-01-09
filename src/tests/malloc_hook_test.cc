@@ -59,13 +59,13 @@ using base::internal::kHookListMaxValues;
 typedef base::internal::HookList<MallocHook::NewHook> TestHookList;
 
 
-const MallocHook::NewHook kTestValue = [] (const void* ptr, size_t size) {
+const MallocHook::NewHook kTestValue = [] (const void* ptr, size_t size, const char*) {
   printf("kTestValue\n");
 };
-const MallocHook::NewHook kAnotherTestValue = [] (const void* ptr, size_t size) {
+const MallocHook::NewHook kAnotherTestValue = [] (const void* ptr, size_t size, const char*) {
   printf("kAnotherTestValue\n");
 };
-const MallocHook::NewHook kThirdTestValue = [] (const void* ptr, size_t size) {
+const MallocHook::NewHook kThirdTestValue = [] (const void* ptr, size_t size, const char*) {
   printf("kThirdTestValue\n");
 };
 
