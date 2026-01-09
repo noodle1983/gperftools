@@ -145,32 +145,33 @@ void check_start_profile()
 		enabled = file_exists("tcmalloc.profile.enable");
 		is_inited = true;
 
-		std::ifstream file("tcmalloc.profile.enable");
-		std::string line;
-		while (std::getline(file, line)) {
-			if (line.empty() || line[0] == '#') {
-				continue;
-			}
-
-			size_t pos = line.find('=');
-			if (pos != std::string::npos) {
-				std::string key = line.substr(0, pos);
-				std::string value = line.substr(pos + 1);
-
-				key.erase(0, key.find_first_not_of(" \t"));
-				key.erase(key.find_last_not_of(" \t") + 1);
-				value.erase(0, value.find_first_not_of(" \t"));
-				value.erase(value.find_last_not_of(" \t") + 1);
-
-				if (key == "START_PROFILE_SIZE") {
-					set_profile(true, value.c_str());
-				} else {
-					printf("profile enabled. unknown config:%s = %s\n", key.c_str(), value.c_str());
-				}
-			}
-		}
-		file.close();
 		if (enabled) {
+            std::ifstream file("tcmalloc.profile.enable");
+            std::string line;
+            while (std::getline(file, line)) {
+                if (line.empty() || line[0] == '#') {
+                    continue;
+                }
+
+                size_t pos = line.find('=');
+                if (pos != std::string::npos) {
+                    std::string key = line.substr(0, pos);
+                    std::string value = line.substr(pos + 1);
+
+                    key.erase(0, key.find_first_not_of(" \t"));
+                    key.erase(key.find_last_not_of(" \t") + 1);
+                    value.erase(0, value.find_first_not_of(" \t"));
+                    value.erase(value.find_last_not_of(" \t") + 1);
+
+                    if (key == "START_PROFILE_SIZE") {
+                        set_profile(true, value.c_str());
+                    } else {
+                        printf("profile enabled. unknown config:%s = %s\n", key.c_str(), value.c_str());
+                    }
+                }
+            }
+            file.close();
+
 			printf("profile enabled. START_PROFILE_SIZE:%zu\n", START_PROFILE_SIZE);
 		}
 	}
@@ -210,7 +211,6 @@ PERFTOOLS_DLL_DECL void get_stack_backtrace(char* buff, int len)
 {
   static constexpr int kDepth = 32;
   void* stack[kDepth];
-  char buf[128] = { 0 };
   int depth = tcmalloc::GrabBacktrace(stack, kDepth, 0);
   std::stringstream out;
   out << "back trace:";
