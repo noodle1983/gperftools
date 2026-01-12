@@ -97,6 +97,8 @@ PERFTOOLS_DLL_DECL void HeapProfilerDump(const char *reason);
  * and should be free()-ed as soon as the caller does not need it anymore.
  */
 PERFTOOLS_DLL_DECL char* GetHeapProfile();
+PERFTOOLS_DLL_DECL void SetHeapProfilerIUseInterval(int64_t interval);
+PERFTOOLS_DLL_DECL int64_t GetHeapProfilerIUseInterval();
 
 #ifdef __cplusplus
 }  // extern "C"

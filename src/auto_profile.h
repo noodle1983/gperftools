@@ -81,34 +81,23 @@ PERFTOOLS_DLL_DECL void dump_memmap(const char* path)
 	}
 }
 
-PERFTOOLS_DLL_DECL size_t set_profile(bool is_enable, const char* start_profile_size)
+int64_t parse_config_size(const char* size_str, int64_t def)
 {
-	if (!is_enable) {
-		enabled = false;
-		if (IsHeapProfilerRunning()) {
-			HeapProfilerStop();
-		}
-		printf("profile disabled.\n");
-		return 0;
-	}
-
-	enabled = true;
-	std::string start_profile_size_str(start_profile_size);
+	std::string size_string(size_str);
 	std::string num_str;
 	std::string unit_str;
 	size_t i = 0;
 
-	start_profile_size_str.erase(0, start_profile_size_str.find_first_not_of(" \t"));
-	start_profile_size_str.erase(start_profile_size_str.find_last_not_of(" \t") + 1);
-	while (i < start_profile_size_str.length() && (std::isdigit(start_profile_size_str[i]) || start_profile_size_str[i] == '.')) { i++; }
+	size_string.erase(0, size_string.find_first_not_of(" \t"));
+	size_string.erase(size_string.find_last_not_of(" \t") + 1);
+	while (i < size_string.length() && (std::isdigit(size_string[i]) || size_string[i] == '.')) { i++; }
 	if (i > 0) {
-		num_str = start_profile_size_str.substr(0, i);
-		unit_str = my_to_upper(my_trim(start_profile_size_str.substr(i)));
+		num_str = size_string.substr(0, i);
+		unit_str = my_to_upper(my_trim(size_string.substr(i)));
 	}
 
 	if (num_str.empty()) { 
-		printf("profile enabled. START_PROFILE_SIZE:%zu\n", START_PROFILE_SIZE);
-		return START_PROFILE_SIZE;
+		return def;
 	}
 	double d = std::stod(num_str);
 
@@ -126,9 +115,43 @@ PERFTOOLS_DLL_DECL size_t set_profile(bool is_enable, const char* start_profile_
 			d *= 1024 * 1024 * 1024 * 1024ULL;
 		}
 	}
-	START_PROFILE_SIZE = (size_t)d;
+	return (int64_t)d;
+}
+
+PERFTOOLS_DLL_DECL size_t set_profile(bool is_enable, const char* start_profile_size)
+{
+	if (!is_enable) {
+		enabled = false;
+		if (IsHeapProfilerRunning()) {
+			HeapProfilerStop();
+		}
+		printf("profile disabled.\n");
+		return 0;
+	}
+
+	enabled = true;
+	START_PROFILE_SIZE = parse_config_size(start_profile_size, START_PROFILE_SIZE);
 	printf("profile enabled. START_PROFILE_SIZE:%zu\n", START_PROFILE_SIZE);
 	return START_PROFILE_SIZE;
+}
+
+PERFTOOLS_DLL_DECL void set_profile(bool is_enable, const char* start_profile_size, const char* iuse_interval)
+{
+	if (!is_enable) {
+		enabled = false;
+		if (IsHeapProfilerRunning()) {
+			HeapProfilerStop();
+		}
+		printf("profile disabled.\n");
+		return;
+	}
+
+	enabled = true;
+	START_PROFILE_SIZE = parse_config_size(start_profile_size, START_PROFILE_SIZE);
+	int64_t iuse_interval_value = parse_config_size(iuse_interval, GetHeapProfilerIUseInterval());
+	SetHeapProfilerIUseInterval(iuse_interval_value);
+	printf("profile enabled. START_PROFILE_SIZE:%zu, DumpIntervalByIUse:%zd\n", START_PROFILE_SIZE, GetHeapProfilerIUseInterval());
+	return;
 }
 
 void check_start_profile()
@@ -146,6 +169,9 @@ void check_start_profile()
 		is_inited = true;
 
 		if (enabled) {
+			std::string start_profile_size = "1GB";
+			std::string iuse_interval = "100MB";
+
             std::ifstream file("tcmalloc.profile.enable");
             std::string line;
             while (std::getline(file, line)) {
@@ -163,14 +189,19 @@ void check_start_profile()
                     value.erase(0, value.find_first_not_of(" \t"));
                     value.erase(value.find_last_not_of(" \t") + 1);
 
-                    if (key == "START_PROFILE_SIZE") {
-                        set_profile(true, value.c_str());
+					if (key == "HEAP_PROFILE_INUSE_INTERVAL") {
+						iuse_interval = value;
+					}
+                    else if (key == "START_PROFILE_SIZE") {
+						start_profile_size = value;
                     } else {
                         printf("profile enabled. unknown config:%s = %s\n", key.c_str(), value.c_str());
                     }
                 }
             }
             file.close();
+
+			set_profile(true, start_profile_size.c_str(), iuse_interval.c_str());
 
 			printf("profile enabled. START_PROFILE_SIZE:%zu\n", START_PROFILE_SIZE);
 		}
@@ -189,7 +220,12 @@ void check_start_profile()
 
 	char buf[512] = { 0 };
 	MallocExtension::instance()->GetStats(buf, sizeof(buf) - 1);
-	printf("profile enabled:%d, Heap Stat: %s\n", (int)enabled, buf);
+	if (!enabled) {
+		printf("profile enabled:%d, Heap Stat: %s\n", (int)enabled, buf);
+	}
+	else {
+		printf("profile enabled:%d, iUse Interval:%.2fMB Heap Stat: %s\n", (int)enabled, GetHeapProfilerIUseInterval()*1.0f/(1<<20), buf);
+	}
 
 	size_t heap_size;
 	MallocExtension::instance()->GetNumericProperty("generic.heap_size", &heap_size);

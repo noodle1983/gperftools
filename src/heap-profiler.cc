@@ -411,6 +411,15 @@ extern "C" int IsHeapProfilerRunning() {
   return is_on ? 1 : 0;   // return an int, because C code doesn't have bool
 }
 
+extern "C" void SetHeapProfilerIUseInterval(int64_t interval) {
+	if (interval < (1 << 20)) { return; } // no less then 1MB
+    FLAGS_heap_profile_inuse_interval = interval;
+}
+
+extern "C" int64_t GetHeapProfilerIUseInterval() {
+    return FLAGS_heap_profile_inuse_interval;
+}
+
 extern "C" void HeapProfilerStop() {
   SpinLockHolder l(&heap_lock);
 
