@@ -52,6 +52,7 @@
 #define BASE_HEAP_PROFILER_H_
 
 #include <stddef.h>
+#include <stdint.h>
 
 /* Annoying stuff for windows; makes sure clients can import these functions */
 #ifndef PERFTOOLS_DLL_DECL
