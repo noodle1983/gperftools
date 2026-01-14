@@ -49,7 +49,11 @@
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>                 // for fork()
 #endif
+#ifndef _WIN32
 #include <sys/wait.h>               // for wait()
+#else
+#define mkdir(p, m) CreateDirectory(p, NULL) 
+#endif
 #include <string>
 
 #include "base/basictypes.h"
@@ -159,6 +163,7 @@ int main(int argc, char** argv) {
   Deallocate(90, 100);
   Deallocate(20, 90);
 
+#ifndef _WIN32
   while (num_forks-- > 0) {
     switch (fork()) {
       case -1:
@@ -170,6 +175,7 @@ int main(int argc, char** argv) {
         wait(nullptr);       // we'll let the kids run one at a time
     }
   }
+#endif
 
   printf("DONE.\n");
 
