@@ -137,7 +137,7 @@ PERFTOOLS_DLL_DECL size_t set_profile(bool is_enable, const char* start_profile_
 	return START_PROFILE_SIZE;
 }
 
-PERFTOOLS_DLL_DECL void set_profile(bool is_enable, const char* start_profile_size, const char* iuse_interval)
+PERFTOOLS_DLL_DECL void set_profile3(bool is_enable, const char* start_profile_size, const char* iuse_interval)
 {
 	if (!is_enable) {
 		enabled = false;
@@ -203,7 +203,7 @@ void check_start_profile()
             }
             file.close();
 
-			set_profile(true, start_profile_size.c_str(), iuse_interval.c_str());
+			set_profile3(true, start_profile_size.c_str(), iuse_interval.c_str());
 		}
 	}
 
