@@ -103,10 +103,14 @@ sub load_module_cache_from_heap {
         if ($in_mapped_libraries) {
             # 格式: 起始地址-结束地址 权限 偏移 设备 inode 模块路径
             # 示例: 7ffa00000000-7ffa00021000 r--p 00000000 00:00 0 /path/to/module.dll
-            if ($line =~ /^([0-9a-fA-F]+)-([0-9a-fA-F]+)\s+\S+\s+\S+\s+\S+\s+\S+\s+(.+)$/) {
+            if ($line =~ /^([0-9a-fA-F]+)-([0-9a-fA-F]+)\s+(\S+)\s+(\S+)\s+\S+\s+\S+\s+(.+)$/) {
                 my $start_addr = $1;
                 my $end_addr = $2;
-                my $module_path = $3;
+                my $permission = $3;
+                my $file_offset = $4;
+                my $module_path = $5;
+
+                next unless $permission =~ /x/;
                 
                 # 提取模块文件名
                 my $module_name = $module_path;
@@ -118,6 +122,7 @@ sub load_module_cache_from_heap {
                 # 存储模块信息
                 $module_cache{$module_name} = {
                     base_address => bighex('0x' . $start_addr),
+                    file_offset => bighex('0x' . $file_offset),
                     size => $size,
                     full_path => $module_path
                 };
@@ -144,8 +149,8 @@ sub load_module_cache_from_heap {
         print "  加载的模块:\n";
         foreach my $module (sort keys %module_cache) {
             my $info = $module_cache{$module};
-            printf "    %s: 0x%X (大小: 0x%X bytes)\n", 
-                   $module, $info->{base_address}, $info->{size};
+            printf "    %s: 0x%x (大小: 0x%x bytes, 偏移: 0x%x)\n", 
+                   $module, $info->{base_address}, $info->{size},  $info->{file_offset};
         }
     } else {
         print "  - 警告: 未在heap文件中找到模块映射信息\n";
@@ -371,11 +376,6 @@ sub print_stack_with_symbols {
 		}
         print "\n";
     }
-    
-    # 如果解析失败，提供备用建议
-    print "\n  如果符号解析失败，可以手动使用:\n";
-    my $addr_str = join(" ", @addresses[0..min(2, $#addresses)]);
-    print "  使用WinDbg: ln $addr_str\n";
 }
 
 sub bighex {
@@ -403,12 +403,6 @@ sub to_bighex {
 sub resolve_address_symbol {
     my ($address) = @_;
     
-    # 检查是否在Windows环境下
-    my $os = get_os_type();
-    if ($os ne 'windows') {
-        return undef;  # 目前只支持Windows
-    }
-    
     # 将地址转换为数值
     my $addr_num;
     if ($address =~ /^0x([0-9a-fA-F]+)$/) {
@@ -424,7 +418,12 @@ sub resolve_address_symbol {
     }
     
     # 使用symquery解析符号
-    return resolve_with_symquery($module_name, $relative_addr);
+    my $os = get_os_type();
+    if ($os eq 'windows') {
+        return resolve_with_symquery($module_name, $relative_addr);
+    } else {
+        return resolve_with_addr2line($module_name, $relative_addr);
+    }
 }
 
 sub find_module_for_address {
@@ -433,10 +432,11 @@ sub find_module_for_address {
     foreach my $module_name (keys %module_cache) {
         my $base_addr = $module_cache{$module_name}->{base_address};
         my $size = $module_cache{$module_name}->{size};
+        my $file_offset = $module_cache{$module_name}->{file_offset};
         my $end_addr = $base_addr + $size;
         
         if ($address >= $base_addr && $address < $end_addr) {
-            my $relative_addr = $address - $base_addr;
+            my $relative_addr = $address - $base_addr + $file_offset;
             return ($module_name, $relative_addr);
         }
     }
@@ -462,6 +462,29 @@ sub resolve_with_symquery {
         # 简化输出，只保留主要信息
         $result =~ s/\s+/ /g;
         return "[[$module_name+0x" . sprintf("%X", $relative_addr) . "]$result";
+    } else {
+        return "[$module_name+0x" . sprintf("%X", $relative_addr) . "]";
+    }
+}
+
+sub resolve_with_addr2line {
+    my ($module_name, $relative_addr) = @_;
+    
+    # 检查symquery是否可用
+    my $symquery_check = `which addr2line 2>nul`;
+    if (!$symquery_check) {
+        return "[$module_name+0x" . sprintf("%X", $relative_addr) . "]";
+    }
+    
+    # 调用symquery解析符号
+    my $hex_addr = sprintf("0x%X", $relative_addr);
+    my $result = `addr2line -e "$module_name" "$hex_addr" 2>nul`;
+    chomp $result;
+    
+    if ($result && $result !~ /^\s*$/ && $result !~ /error/i) {
+        # 简化输出，只保留主要信息
+        $result =~ s/\s+/ /g;
+        return "[[$module_name+0x" . sprintf("%X", $relative_addr) . "] $result";
     } else {
         return "[$module_name+0x" . sprintf("%X", $relative_addr) . "]";
     }
@@ -498,7 +521,19 @@ sub print_address_conversion_tips {
 }
 
 sub get_os_type {
-    return 'windows';
+    my $os = $^O;
+
+    if ($os =~ /^MSWin/) {  # 匹配 MSWin32 或 MSWin64
+        return 'windows';
+    } elsif ($os eq 'darwin') {
+        return 'macOS';
+    } elsif ($os eq 'linux') {
+        return 'linux';
+    } else {
+        return $os;
+        # 其他可能的值：
+        # solaris, aix, freebsd, openbsd, netbsd, dec_osf, irix, hpux, ...
+    }
 }
 
 sub print_windows_conversion_tips {
