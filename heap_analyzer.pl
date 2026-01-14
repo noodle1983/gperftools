@@ -140,7 +140,7 @@ sub load_module_cache_from_heap {
         print "  加载的模块:\n";
         foreach my $module (sort keys %module_cache) {
             my $info = $module_cache{$module};
-            printf "    %s: 0x%X (大小: 0x%X bytes)\n", 
+            printf "    %s: 0x%x (大小: 0x%x bytes)\n", 
                    $module, $info->{base_address}, $info->{size};
         }
     } else {

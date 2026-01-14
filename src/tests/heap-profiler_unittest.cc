@@ -111,13 +111,16 @@ static void TestDumpHeapProfiler() {
   if (!IsHeapProfilerRunning()) {
     const char* tmpdir = getenv("TMPDIR");
     if (tmpdir == nullptr)
-      tmpdir = "/tmp";
+      tmpdir = ".";
     mkdir(tmpdir, 0755);     // if necessary
     HeapProfilerStart((std::string(tmpdir) + "/dump").c_str());
     CHECK(IsHeapProfilerRunning());
 
     Allocate(0, 40, 100);
     Deallocate(0, 40);
+
+    Allocate(0, kMaxCount, 100);
+    Allocate(0, kMaxCount, 100);
 
     char* output = GetHeapProfile();
     free(output);

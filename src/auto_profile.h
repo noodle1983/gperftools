@@ -12,6 +12,8 @@
 #include <stdio.h>
 #include <sstream>
 
+const double MB = 1.0 * (1<<20);
+
 static std::atomic<bool> is_inited = false;
 static std::atomic<bool> enabled = true;
 static std::atomic<size_t> auto_tick = 0;
@@ -131,7 +133,7 @@ PERFTOOLS_DLL_DECL size_t set_profile(bool is_enable, const char* start_profile_
 
 	enabled = true;
 	START_PROFILE_SIZE = parse_config_size(start_profile_size, START_PROFILE_SIZE);
-	printf("profile enabled. START_PROFILE_SIZE:%zu\n", START_PROFILE_SIZE);
+	printf("profile enabled. START_PROFILE_SIZE:%.2fMBu\n", START_PROFILE_SIZE/MB);
 	return START_PROFILE_SIZE;
 }
 
@@ -150,7 +152,7 @@ PERFTOOLS_DLL_DECL void set_profile(bool is_enable, const char* start_profile_si
 	START_PROFILE_SIZE = parse_config_size(start_profile_size, START_PROFILE_SIZE);
 	int64_t iuse_interval_value = parse_config_size(iuse_interval, GetHeapProfilerIUseInterval());
 	SetHeapProfilerIUseInterval(iuse_interval_value);
-	printf("profile enabled. START_PROFILE_SIZE:%zu, DumpIntervalByIUse:%zd\n", START_PROFILE_SIZE, GetHeapProfilerIUseInterval());
+	printf("profile enabled. START_PROFILE_SIZE:%.2fMB, DumpIntervalByIUse:%.2fMB\n", START_PROFILE_SIZE/MB, GetHeapProfilerIUseInterval()/MB);
 	return;
 }
 
@@ -202,8 +204,6 @@ void check_start_profile()
             file.close();
 
 			set_profile(true, start_profile_size.c_str(), iuse_interval.c_str());
-
-			printf("profile enabled. START_PROFILE_SIZE:%zu\n", START_PROFILE_SIZE);
 		}
 	}
 
