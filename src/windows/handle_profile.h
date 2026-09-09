@@ -42,6 +42,7 @@
 #pragma warning(push)
 #pragma warning(disable : 4996)
 
+#include <winsock2.h>
 #include <windows.h>
 #include <iostream>
 #include <sstream>
@@ -107,6 +108,7 @@ enum HandleType {
   HANDLE_TYPE_THREADPOOL_WAIT,
   HANDLE_TYPE_THREADPOOL_IO,
   HANDLE_TYPE_THREADPOOL_WORK,
+  HANDLE_TYPE_SOCKET,
   HANDLE_TYPE_UNKNOWN
 };
 
@@ -210,6 +212,7 @@ std::string HandleTypeToString(HandleType type) {
     case HANDLE_TYPE_THREADPOOL_WAIT: return "THREADPOOL_WAIT";
     case HANDLE_TYPE_THREADPOOL_IO: return "THREADPOOL_IO";
     case HANDLE_TYPE_THREADPOOL_WORK: return "THREADPOOL_WORK";
+    case HANDLE_TYPE_SOCKET: return "SOCKET";
     default: return "UNKNOWN";
   }
 }
@@ -379,8 +382,12 @@ const int CREATE_THREADPOOL_WAIT_INDEX = 33;
 const int CREATE_THREADPOOL_IO_INDEX = 34;
 const int CREATE_THREADPOOL_WORK_INDEX = 35;
 const int CLOSE_HANDLE_INDEX = 36;
+const int SOCKET_INDEX = 37;
+const int WSASOCKET_A_INDEX = 38;
+const int WSASOCKET_W_INDEX = 39;
+const int CLOSESOCKET_INDEX = 40;
 
-const int MAX_HANDLE_FUNCTIONS = 37;
+const int MAX_HANDLE_FUNCTIONS = 41;
 
 // Forward declarations
 HANDLE WINAPI Perftools_CreateEventA(
@@ -621,6 +628,31 @@ PTP_WORK WINAPI Perftools_CreateThreadpoolWork(
 BOOL WINAPI Perftools_CloseHandle(
     _In_ HANDLE hObject);
 
+// Socket function declarations
+SOCKET WINAPI Perftools_socket(
+    _In_ int af,
+    _In_ int type,
+    _In_ int protocol);
+
+SOCKET WINAPI Perftools_WSASocketA(
+    _In_ int af,
+    _In_ int type,
+    _In_ int protocol,
+    _In_opt_ LPWSAPROTOCOL_INFOA lpProtocolInfo,
+    _In_ GROUP g,
+    _In_ DWORD dwFlags);
+
+SOCKET WINAPI Perftools_WSASocketW(
+    _In_ int af,
+    _In_ int type,
+    _In_ int protocol,
+    _In_opt_ LPWSAPROTOCOL_INFOW lpProtocolInfo,
+    _In_ GROUP g,
+    _In_ DWORD dwFlags);
+
+int WINAPI Perftools_closesocket(
+    _In_ SOCKET s);
+
 typedef void (*GenericFnPtr)();
 
 struct HandleFunctionInfo {
@@ -669,6 +701,10 @@ HandleFunctionInfo handle_function_info_[] = {
   { "CreateThreadpoolIo", nullptr, nullptr, (GenericFnPtr)Perftools_CreateThreadpoolIo },
   { "CreateThreadpoolWork", nullptr, nullptr, (GenericFnPtr)Perftools_CreateThreadpoolWork },
   { "CloseHandle", nullptr, nullptr, (GenericFnPtr)Perftools_CloseHandle },
+  { "socket", nullptr, nullptr, (GenericFnPtr)Perftools_socket },
+  { "WSASocketA", nullptr, nullptr, (GenericFnPtr)Perftools_WSASocketA },
+  { "WSASocketW", nullptr, nullptr, (GenericFnPtr)Perftools_WSASocketW },
+  { "closesocket", nullptr, nullptr, (GenericFnPtr)Perftools_closesocket },
 };
 
 // Handle patching functions using Detours
@@ -703,6 +739,8 @@ PERFTOOLS_DLL_DECL void PatchHandleFunctions() {
     return;
   }
 
+  HMODULE ws2_module = ::LoadLibraryA("ws2_32.dll");
+
   // Begin Detours transaction
   DetourTransactionBegin();
   DetourUpdateThread(GetCurrentThread());
@@ -710,11 +748,33 @@ PERFTOOLS_DLL_DECL void PatchHandleFunctions() {
   // Unlike for libc, we know these exist in our module, so we can get
   // and patch at the same time.
   for (int i = 0; i < MAX_HANDLE_FUNCTIONS; i++) {
+    // Determine which module to use based on function name
+    HMODULE target_module = kernel32_module;
+    const char* func_name = handle_function_info_[i].name;
+    
+    // Socket functions are in ws2_32.dll
+    if (strcmp(func_name, "socket") == 0 ||
+        strcmp(func_name, "WSASocketA") == 0 ||
+        strcmp(func_name, "WSASocketW") == 0 ||
+        strcmp(func_name, "closesocket") == 0) {
+      if (ws2_module == nullptr) {
+        // Try to load ws2_32.dll if not already loaded
+        ws2_module = ::LoadLibraryA("ws2_32.dll");
+        if (ws2_module == nullptr) {
+          HANDLE_TRACE(true,
+            std::cout << "Failed to load ws2_32.dll for " << func_name << std::endl;
+          );
+          continue;
+        }
+      }
+      target_module = ws2_module;
+    }
+    
     handle_function_info_[i].windows_fn = (GenericFnPtr)
-        ::GetProcAddress(kernel32_module, handle_function_info_[i].name);
+        ::GetProcAddress(target_module, func_name);
     
     if (handle_function_info_[i].windows_fn == nullptr) {
-      // Skip functions that don't exist in this version of kernel32
+      // Skip functions that don't exist in this version of the module
       continue;
     }
     
@@ -1845,6 +1905,108 @@ BOOL WINAPI Perftools_CloseHandle(HANDLE hObject) {
   
   HANDLE_TRACE(true,
     std::cout << "CloseHandle returned " << result << std::endl;
+  );
+  
+  return result;
+}
+
+// Socket function implementations
+SOCKET WINAPI Perftools_socket(
+    _In_ int af,
+    _In_ int type,
+    _In_ int protocol) {
+  HANDLE_TRACE(true,
+    std::cout << "socket called with af=" << af << ", type=" << type << ", protocol=" << protocol << std::endl;
+  );
+  
+  SOCKET result = ((SOCKET (WINAPI *)(int, int, int))
+                  handle_function_info_[SOCKET_INDEX].origstub_fn)(
+                  af, type, protocol);
+  
+  // Record the socket creation
+  if (result != INVALID_SOCKET) {
+    std::string name = "socket(af=" + std::to_string(af) + ",type=" + std::to_string(type) + ",proto=" + std::to_string(protocol) + ")";
+    RecordHandleCreation((HANDLE)result, HANDLE_TYPE_SOCKET, name);
+  }
+  
+  HANDLE_TRACE(true,
+    std::cout << "socket returned " << result << std::endl;
+  );
+  
+  return result;
+}
+
+SOCKET WINAPI Perftools_WSASocketA(
+    _In_ int af,
+    _In_ int type,
+    _In_ int protocol,
+    _In_opt_ LPWSAPROTOCOL_INFOA lpProtocolInfo,
+    _In_ GROUP g,
+    _In_ DWORD dwFlags) {
+  HANDLE_TRACE(true,
+    std::cout << "WSASocketA called with af=" << af << ", type=" << type << ", protocol=" << protocol << std::endl;
+  );
+  
+  SOCKET result = ((SOCKET (WINAPI *)(int, int, int, LPWSAPROTOCOL_INFOA, GROUP, DWORD))
+                  handle_function_info_[WSASOCKET_A_INDEX].origstub_fn)(
+                  af, type, protocol, lpProtocolInfo, g, dwFlags);
+  
+  // Record the socket creation
+  if (result != INVALID_SOCKET) {
+    std::string name = "WSASocketA(af=" + std::to_string(af) + ",type=" + std::to_string(type) + ",proto=" + std::to_string(protocol) + ")";
+    RecordHandleCreation((HANDLE)result, HANDLE_TYPE_SOCKET, name);
+  }
+  
+  HANDLE_TRACE(true,
+    std::cout << "WSASocketA returned " << result << std::endl;
+  );
+  
+  return result;
+}
+
+SOCKET WINAPI Perftools_WSASocketW(
+    _In_ int af,
+    _In_ int type,
+    _In_ int protocol,
+    _In_opt_ LPWSAPROTOCOL_INFOW lpProtocolInfo,
+    _In_ GROUP g,
+    _In_ DWORD dwFlags) {
+  HANDLE_TRACE(true,
+    std::cout << "WSASocketW called with af=" << af << ", type=" << type << ", protocol=" << protocol << std::endl;
+  );
+  
+  SOCKET result = ((SOCKET (WINAPI *)(int, int, int, LPWSAPROTOCOL_INFOW, GROUP, DWORD))
+                  handle_function_info_[WSASOCKET_W_INDEX].origstub_fn)(
+                  af, type, protocol, lpProtocolInfo, g, dwFlags);
+  
+  // Record the socket creation
+  if (result != INVALID_SOCKET) {
+    std::string name = "WSASocketW(af=" + std::to_string(af) + ",type=" + std::to_string(type) + ",proto=" + std::to_string(protocol) + ")";
+    RecordHandleCreation((HANDLE)result, HANDLE_TYPE_SOCKET, name);
+  }
+  
+  HANDLE_TRACE(true,
+    std::cout << "WSASocketW returned " << result << std::endl;
+  );
+  
+  return result;
+}
+
+int WINAPI Perftools_closesocket(
+    _In_ SOCKET s) {
+  HANDLE_TRACE(true,
+    std::cout << "closesocket called with s=" << s << std::endl;
+  );
+  
+  // Record handle destruction before calling the original function
+  RecordHandleDestruction((HANDLE)s);
+  
+  int result = ((int (WINAPI *)(SOCKET))
+                handle_function_info_[CLOSESOCKET_INDEX].origstub_fn)(
+                s);
+  
+  HANDLE_TRACE(true,
+    std::cout << "closesocket returned " << result << std::endl;
   );
   
   return result;
