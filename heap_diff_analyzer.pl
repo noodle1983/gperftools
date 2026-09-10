@@ -455,7 +455,7 @@ sub resolve_with_symquery {
     
     # 调用symquery解析符号
     my $hex_addr = sprintf("0x%X", $relative_addr);
-    my $result = `symquery.exe -e "$module_name" -a "$hex_addr" 2>nul`;
+    my $result = `symquery.exe -e "$module_name" -f -a "$hex_addr" 2>nul`;
     chomp $result;
     
     if ($result && $result !~ /^\s*$/ && $result !~ /error/i) {
@@ -545,7 +545,7 @@ sub print_windows_conversion_tips {
     # 方法1: 使用symquery
     print "  方法1 - 使用symquery:\n";
     print "  # 首先获取模块基地址，然后计算相对地址\n";
-    print "  symquery -e <模块名.dll> -a <相对地址>\n\n";
+    print "  symquery -e <模块名.dll> -f -a <相对地址>\n\n";
     
     # 方法2: 使用WinDbg
     print "  方法2 - 使用WinDbg:\n";

@@ -222,7 +222,7 @@ sub resolve_symbol {
     my $out = '';
     my $success = 0;
     for my $target (@targets) {
-      $out = `"$cmd" -e "$target" -a "$rel_hex" 2>&1`;
+      $out = `"$cmd" -e "$target" -f -a "$rel_hex" 2>&1`;
       chomp $out;
       $out =~ s/\r//g;
       $out =~ s/\s+/ /g;
